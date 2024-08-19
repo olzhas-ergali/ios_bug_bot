@@ -4,3 +4,5 @@ tg_config.py
 venv
 *.ips
 .env
+*.xlsx
+*.txt

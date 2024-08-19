@@ -31,3 +31,8 @@ class Keyboards:
                 InlineKeyboardButton(text="Назад ◀️", callback_data=HomeCallback(action="back_to_home").pack()),
             ]
         ])
+
+    @staticmethod
+    def link(link):
+        return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Ссылка на видео 🎥", url=link)]])
+

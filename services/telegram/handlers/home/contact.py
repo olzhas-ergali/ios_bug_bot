@@ -2,6 +2,7 @@ from aiogram import F, Router
 from aiogram.types import Message, TelegramObject
 
 from database.database import ORM
+from services.telegram.handlers.home.home import home
 from services.telegram.misc.keyboards import Keyboards
 
 router = Router()
@@ -15,6 +16,7 @@ async def ask_contact(event: TelegramObject):
 
 @router.message(F.contact)
 async def contact_received(message: Message, orm: ORM):
-    await orm.user_repo.save_user(message)
+    user = await orm.user_repo.save_user(message)
     await message.answer("Спасибо за предоставленную информацию!"
                          f"\nОжидайте пока админ проверит вашу анкету ⌛️")
+    await home(message, user)

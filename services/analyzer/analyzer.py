@@ -18,24 +18,30 @@ class LogAnalyzer:
 
     @staticmethod
     def get_jsons(text) -> dict:
-        text = "".join(text.split("\n")[1:])
-        return json.loads(text)
+        try:
+            text = "".join(text.split("\n")[1:])
+            return json.loads(text)
+        except:
+            print("asdasdasdasd")
 
     def analyze(self):
-        results = {
-            "problems": [],
-            "product": ""
-        }
-        panic_string = self.log_dict["panicString"]
+        try:
+            results = {
+                "problems": [],
+                "product": ""
+            }
+            panic_string = self.log_dict["panicString"]
 
-        for pattern, description in self.patterns.items():
-            if pattern:
-                pattern = pattern.replace('“', "").replace("”", "")
-                match = re.search(pattern + r'.*', panic_string, re.DOTALL)
-                if match:
-                    results["problems"].append(description)
-        results["product"] = self.log_dict["product"]
-        return results
+            for pattern, description in self.patterns.items():
+                if pattern:
+                    pattern = pattern.replace('“', "").replace("”", "")
+                    match = re.search(pattern + r'.*', panic_string, re.DOTALL)
+                    if match:
+                        results["problems"].append(description)
+            results["product"] = self.log_dict["product"]
+            return results
+        except:
+            print("ggggggggggggggg")
 
     def get_model(self):
         result = re.search(r's.*', self.log, re.DOTALL)
