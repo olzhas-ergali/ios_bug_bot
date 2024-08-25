@@ -7,7 +7,7 @@ import openpyxl
 class LogAnalyzer:
     def __init__(self, path):
         workbook = openpyxl.load_workbook(
-            ".\data\panic_codes.xlsx")
+            "./data/panic_codes.xlsx")
         self.sheet = workbook["Лист1"]
         self.log = self._read_log_file(path)
         self.log_dict = self.get_jsons(self.log)
