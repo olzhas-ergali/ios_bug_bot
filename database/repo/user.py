@@ -8,33 +8,33 @@ from database.repo.repo import Repo
 class UserRepo(Repo):
     async def find_user_by_user_id(self, user_id) -> User:
         async with self.sessionmaker() as session:
-            query = (
-                select(User)
-                .filter_by(user_id=user_id)
-            )
-            result = await session.execute(query)
-            user = result.scalar_one_or_none()
-            return user
+            query = select(User).filter_by(user_id=user_id)
+            return await session.scalar(query) or User()
 
     async def save_user(self, message: Message) -> User:
         async with self.sessionmaker() as session:
-            user = self.create_user_from_contact(message)
-            async with session.begin():
-                session.add(user)
-                await session.commit()
+            contact_user_id = message.contact.user_id
 
-            result = await session.execute(
-                select(User).filter_by(user_id=user.user_id)
+            existing_user = await session.execute(
+                select(User).filter_by(user_id=contact_user_id)
             )
-            user = result.scalar_one_or_none()
-            return user
+            existing_user = existing_user.scalar_one_or_none()
+
+            if existing_user:
+                return existing_user
+
+            new_user = self.create_user_from_contact(message)
+            session.add(new_user)
+            await session.commit()
+
+            return new_user
 
     @staticmethod
     def create_user_from_contact(message: Message) -> User:
         user = User()
         contact = message.contact
         user.username = message.from_user.username
-        user.fullname = f"{contact.first_name or ''} {contact.last_name or ''}".strip()
+        # user.fullname = f"{contact.first_name or ''} {contact.last_name or ''}".strip()
         user.user_id = contact.user_id
         user.phone_number = contact.phone_number
         return user
@@ -43,7 +43,8 @@ class UserRepo(Repo):
         async with self.sessionmaker() as session:
             if user_id is not None:
                 async with session.begin():
-                    result = await session.execute(select(User).filter_by(user_id=user_id))
+                    result = await session.execute(
+                        select(User).filter_by(user_id=user_id))
                     user = result.scalar_one_or_none()
                     if user:
                         for key, value in user_data.items():

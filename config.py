@@ -14,6 +14,7 @@ class Environ:
         self.logging_level = env.int("LOGGING_LEVEL")
         self.dev_mode = env.bool("DEV_MODE")
         self.admins = env.str("ADMINS").split(",")
+        self.channel_id = env.str("CHANNEL_ID")
 
     def psycopg_url(self):
         return f"postgresql+psycopg2://{self.user}:{self.password}@{self.host}:{self.port}/{self.dbname}"

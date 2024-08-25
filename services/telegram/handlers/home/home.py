@@ -3,10 +3,13 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 
 from database.models import User
+from services.telegram.filters.role import RoleFilter
 from services.telegram.misc.callbacks import HomeCallback
 from services.telegram.misc.keyboards import Keyboards
 
 router = Router()
+router.message.filter(RoleFilter(roles=["admin", "user"]))
+router.callback_query.filter(RoleFilter(roles=["admin", "user"]))
 
 
 @router.message(F.text == "Главная")

@@ -17,7 +17,7 @@ async def start(environment: Environ):
     tg_register = TgRegister(dp, orm)
 
     await orm.create_repos()
-    orm.create_tables(with_drop=True)
+    orm.create_tables(with_drop=False)
 
     # resume_jobs()
     tg_register.register()

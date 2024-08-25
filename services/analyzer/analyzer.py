@@ -1,13 +1,14 @@
 import json
 import re
 
-from services.tags.xlsx_reader import ExcelToDict
+import openpyxl
 
 
 class LogAnalyzer:
     def __init__(self, path):
-        reader = ExcelToDict("D:/PROJECTS/ios_bug_bot/data/panic_tags.xlsx")
-        self.patterns = reader.generate_dict()
+        workbook = openpyxl.load_workbook(
+            "D:\PROJECTS\ios_bug_bot\data\panic_codes.xlsx")
+        self.sheet = workbook["Лист1"]
         self.log = self._read_log_file(path)
         self.log_dict = self.get_jsons(self.log)
 
@@ -24,31 +25,53 @@ class LogAnalyzer:
         except:
             print("asdasdasdasd")
 
-    def analyze(self):
-        try:
-            results = {
-                "problems": [],
-                "product": ""
-            }
-            panic_string = self.log_dict["panicString"]
+    def find_error_solutions(self):
+        results = {
+            "solutions": [],
+            "links": []
+        }
 
-            for pattern, description in self.patterns.items():
-                if pattern:
-                    pattern = pattern.replace('“', "").replace("”", "")
-                    match = re.search(pattern + r'.*', panic_string, re.DOTALL)
-                    if match:
-                        results["problems"].append(description)
-            results["product"] = self.log_dict["product"]
+        model_column = None
+
+        for cell in self.sheet[2]:
+            if cell.value.lower().replace(" ", "") == \
+                    self.log_dict["product"].lower().replace(" ", ""):
+                model_column = cell.column
+                break
+        if model_column is None:
             return results
-        except:
-            print("ggggggggggggggg")
+        rows = self.sheet.iter_rows(
+            min_row=1,
+            max_col=model_column,
+            values_only=True)
+        for row in rows:
+            if row[0] is not None:
+                error_code = row[0].replace('“', '').replace('”', '')
+                panic_string = self.log_dict.get("panicString", "")
+                have_panic = re.search(re.escape(str(error_code)), panic_string)
+                if have_panic:
+                    answer = row[model_column - 1]
+                    results["solutions"], results["links"] = self.filter_cell(
+                        answer)
 
-    def get_model(self):
-        result = re.search(r's.*', self.log, re.DOTALL)
-        if result:
-            return result.group()
+        return results
 
+    def get_model(self) -> list:
+        header_row = self.sheet[1]
+        model_row = self.sheet[2]
 
-if __name__ == "__main__":
-    analyzer = LogAnalyzer("D:\\PROJECTS\\ios_bug_bot\\data\\tmp\\panic-full-2024-08-10-112544.0002.ips")
-    print(analyzer.analyze())
+        for header_cell, model_cell in zip(header_row[3:], model_row[3:]):
+            if model_cell.value.lower().replace(" ", "") == \
+                    self.log_dict["product"].lower().replace(" ", ""):
+                return [header_cell.value, model_cell.value]
+
+    @staticmethod
+    def filter_cell(text: str):
+        solutions = []
+        links = []
+        for value in text.split(";"):
+            if (value := value.strip()).startswith("http"):
+                links.append(value)
+            elif value:
+                solutions.append(value)
+        return solutions, links

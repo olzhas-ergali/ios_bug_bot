@@ -33,7 +33,8 @@ class ORM:
         engine.echo = True
 
     async def get_async_sessionmaker(self) -> async_sessionmaker:
-        return async_sessionmaker(await self.get_async_engine(), expire_on_commit=False)
+        return async_sessionmaker(await self.get_async_engine(),
+                                  expire_on_commit=False)
 
     async def create_repos(self):
         sessionmaker = await self.get_async_sessionmaker()
