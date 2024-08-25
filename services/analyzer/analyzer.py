@@ -62,9 +62,10 @@ class LogAnalyzer:
         model_row = self.sheet[2]
 
         for header_cell, model_cell in zip(header_row[3:], model_row[3:]):
-            if model_cell.value.lower().replace(" ", "") == \
-                    self.log_dict["product"].lower().replace(" ", ""):
-                return [header_cell.value, model_cell.value]
+            if isinstance(model_cell.value, str):
+                if model_cell.value.lower().replace(" ", "") == \
+                        self.log_dict["product"].lower().replace(" ", ""):
+                    return [header_cell.value, model_cell.value]
 
     @staticmethod
     def filter_cell(text: str):
