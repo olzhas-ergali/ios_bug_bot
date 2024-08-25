@@ -34,7 +34,7 @@ class LogAnalyzer:
         model_column = None
 
         for cell in self.sheet[2]:
-            if cell.value is not None:
+            if isinstance(cell.value, str):
                 if cell.value.lower().replace(" ", "") == \
                         self.log_dict["product"].lower().replace(" ", ""):
                     model_column = cell.column
