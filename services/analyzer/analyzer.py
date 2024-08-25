@@ -2,12 +2,12 @@ import json
 import re
 
 import openpyxl
+from openpyxl.cell import Cell
 
 
 class LogAnalyzer:
     def __init__(self, path):
-        workbook = openpyxl.load_workbook(
-            "./data/panic_codes.xlsx")
+        workbook = openpyxl.load_workbook("./data/panic_codes.xlsx")
         self.sheet = workbook["Лист1"]
         self.log = self._read_log_file(path)
         self.log_dict = self.get_jsons(self.log)
@@ -34,10 +34,11 @@ class LogAnalyzer:
         model_column = None
 
         for cell in self.sheet[2]:
-            if cell.value.lower().replace(" ", "") == \
-                    self.log_dict["product"].lower().replace(" ", ""):
-                model_column = cell.column
-                break
+            if cell.value is not None:
+                if cell.value.lower().replace(" ", "") == \
+                        self.log_dict["product"].lower().replace(" ", ""):
+                    model_column = cell.column
+                    break
         if model_column is None:
             return results
         rows = self.sheet.iter_rows(
