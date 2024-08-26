@@ -53,8 +53,8 @@ class LogAnalyzer:
                 if have_panic:
                     answer = row[model_column - 1]
                     solution, links = self.filter_cell(answer)
-                    results["solutions"].append(solution)
-                    results["links"].append(links)
+                    results["solutions"].extend(solution)
+                    results["links"].extend(links)
 
         return results
 
