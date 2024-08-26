@@ -52,8 +52,9 @@ class LogAnalyzer:
                 have_panic = re.search(re.escape(str(error_code)), panic_string)
                 if have_panic:
                     answer = row[model_column - 1]
-                    results["solutions"], results["links"] = self.filter_cell(
-                        answer)
+                    solution, links = self.filter_cell(answer)
+                    results["solutions"].append(solution)
+                    results["links"].append(links)
 
         return results
 
