@@ -7,3 +7,4 @@ venv
 *.xlsx
 *.txt
 !requirements.txt
+data/old_panics/

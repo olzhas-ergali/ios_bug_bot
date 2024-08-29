@@ -1,6 +1,7 @@
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
+from aiogram.utils.i18n import gettext as _
 
 from database.models import User
 from services.telegram.filters.role import RoleFilter
@@ -16,9 +17,9 @@ router.callback_query.filter(RoleFilter(roles=["admin", "user"]))
 @router.message(Command("start"))
 async def home(message: Message, user: User):
     await message.answer(
-        f"Приветствую @{user.username}🙂🤝🏼 "
-        f"\nЯ помогу тебе с анализом сбоев"
-        f"\nОтправь мне файл или изображение и его проанализирую 🔬",
+        _(f"Приветствую @{user.username}🙂🤝🏼 "
+          f"\nЯ помогу тебе с анализом сбоев"
+          f"\nОтправь мне файл или изображение и его проанализирую 🔬"),
         reply_markup=Keyboards.home()
     )
 
