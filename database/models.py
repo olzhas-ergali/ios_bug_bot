@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated
 
-from sqlalchemy import text
+from sqlalchemy import text, BigInteger
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 intpk = Annotated[int, mapped_column(primary_key=True, autoincrement=True)]
@@ -20,11 +20,12 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[intpk]
-    user_id: Mapped[int]
-    username: Mapped[str]
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
+    username: Mapped[str] = mapped_column(nullable=True)
     fullname: Mapped[str] = mapped_column(nullable=True)
     affiliate: Mapped[str] = mapped_column(nullable=True)
     city: Mapped[str] = mapped_column(nullable=True)
+    country: Mapped[str] = mapped_column(nullable=True)
     """
     guest: null in fullname, affiliate, city, phone_number
     no_access: have all datas. wait access from admin
@@ -32,6 +33,7 @@ class User(Base):
     admin: have all privileges
     """
     role: Mapped[str] = mapped_column(default="guest")
+    lang: Mapped[str] = mapped_column(default="ru")
     phone_number: Mapped[str] = mapped_column(nullable=True)
     created_at: Mapped[created_at_pk]
     updated_at: Mapped[updated_at_pk]
@@ -44,6 +46,9 @@ class User(Base):
             result.append("affiliate")
         if not self.city:
             result.append("city")
+        if not self.country:
+            result.append("country")
         if not self.phone_number:
             result.append("phone_number")
+        result.append("lang")
         return result

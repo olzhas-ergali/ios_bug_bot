@@ -3,12 +3,13 @@ import re
 
 import openpyxl
 from openpyxl.cell import Cell
+from openpyxl.workbook import Workbook
 
 
 class LogAnalyzer:
     def __init__(self, path):
-        workbook = openpyxl.load_workbook("./data/panic_codes.xlsx")
-        self.sheet = workbook["Лист1"]
+        workbook: Workbook = openpyxl.load_workbook("./data/panic_codes.xlsx")
+        self.sheet = workbook.active
         self.log = self._read_log_file(path)
         self.log_dict = self.get_jsons(self.log)
 
@@ -48,7 +49,7 @@ class LogAnalyzer:
         for row in rows:
             if row[0] is not None:
                 error_code = row[0].replace('“', '').replace('”', '')
-                panic_string = self.log_dict.get("panicString", "")
+                panic_string = "".join(self.log_dict.get("panicString", "").split("\n")[0:11])
                 have_panic = re.search(re.escape(str(error_code)), panic_string)
                 if have_panic:
                     answer = row[model_column - 1]

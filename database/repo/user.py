@@ -13,10 +13,8 @@ class UserRepo(Repo):
 
     async def save_user(self, message: Message) -> User:
         async with self.sessionmaker() as session:
-            contact_user_id = message.contact.user_id
-
             existing_user = await session.execute(
-                select(User).filter_by(user_id=contact_user_id)
+                select(User).filter_by(user_id=message.from_user.id)
             )
             existing_user = existing_user.scalar_one_or_none()
 
@@ -35,7 +33,7 @@ class UserRepo(Repo):
         contact = message.contact
         user.username = message.from_user.username
         # user.fullname = f"{contact.first_name or ''} {contact.last_name or ''}".strip()
-        user.user_id = contact.user_id
+        user.user_id = message.from_user.id
         user.phone_number = contact.phone_number
         return user
 

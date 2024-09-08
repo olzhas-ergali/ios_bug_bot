@@ -1,5 +1,5 @@
 from aiogram import Dispatcher
-from aiogram.utils.i18n import SimpleI18nMiddleware, I18nMiddleware
+from aiogram.utils.i18n import SimpleI18nMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from database.database import ORM

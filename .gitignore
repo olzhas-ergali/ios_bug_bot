@@ -8,3 +8,6 @@ venv
 *.txt
 !requirements.txt
 data/old_panics/
+
+data/old_cities/
+

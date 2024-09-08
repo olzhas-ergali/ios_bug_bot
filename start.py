@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import logging
 
@@ -12,16 +13,23 @@ from services.telegram.register import TgRegister
 
 
 async def start(environment: Environ):
+    parser = argparse.ArgumentParser(description="Пример скрипта с аргументом -r")
+    parser.add_argument('-r', action='store_true', help='Флаг для выполнения некоторого кода')
+    args = parser.parse_args()
+
     orm = ORM()
 
     bot = Bot(token=environment.bot_token)
     dp = Dispatcher()
 
+    if args.r:
+        orm.create_tables(with_drop=True)
+    else:
+        orm.create_tables(with_drop=False)
     await orm.create_repos()
-    orm.create_tables(with_drop=False)
     create_dirs()
 
-    i18n = I18n(path="locales", default_locale="kk", domain="messages")
+    i18n = I18n(path="./locales/", default_locale="ru", domain="messages")
 
     tg_register = TgRegister(dp, orm, i18n)
     tg_register.register()
