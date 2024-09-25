@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from config import Environ
 from database.models import Base
+from database.repo.subscription import SubscriptionRepo
 from database.repo.user import UserRepo
 
 
@@ -10,6 +11,7 @@ class ORM:
     def __init__(self):
         self.settings = Environ()
         self.user_repo: UserRepo = None
+        self.subscription_repo: SubscriptionRepo = None
 
     async def get_async_engine(self, echo=False):
         async_engine = create_async_engine(
@@ -39,3 +41,4 @@ class ORM:
     async def create_repos(self):
         sessionmaker = await self.get_async_sessionmaker()
         self.user_repo = UserRepo(sessionmaker)
+        self.subscription_repo = SubscriptionRepo(sessionmaker)
