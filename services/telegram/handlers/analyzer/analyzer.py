@@ -2,7 +2,7 @@ import os
 
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery, InputMediaPhoto, InputFile, FSInputFile
+from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.utils.i18n import I18n
 
 from database.database import ORM
