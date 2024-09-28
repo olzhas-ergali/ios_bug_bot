@@ -6,9 +6,20 @@ from database.repo.repo import Repo
 
 
 class UserRepo(Repo):
+    async def find_all(self) -> list[User]:
+        async with self.sessionmaker() as session:
+            query = select(User)
+            result = await session.scalars(query)
+            return result.all() or []
+
     async def find_user_by_user_id(self, user_id) -> User:
         async with self.sessionmaker() as session:
             query = select(User).filter_by(user_id=user_id)
+            return await session.scalar(query) or User()
+
+    async def find_user_by_username(self, username) -> User:
+        async with self.sessionmaker() as session:
+            query = select(User).filter_by(username=username)
             return await session.scalar(query) or User()
 
     async def save_user(self, message: Message) -> User:

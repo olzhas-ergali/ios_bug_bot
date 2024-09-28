@@ -8,8 +8,10 @@ from aiogram.utils.i18n import I18n
 
 from config import Environ
 from database.database import ORM
+from services.telegram.jobs.tasks import check_subscribe_client
 from services.telegram.misc.create_dirs import create_dirs
 from services.telegram.register import TgRegister
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 
 async def start(environment: Environ):
@@ -35,6 +37,16 @@ async def start(environment: Environ):
     tg_register.register()
     await dp.start_polling(bot)
 
+    scheduler = AsyncIOScheduler(
+        timezone='Asia/Almaty'
+    )
+    scheduler.add_job(
+        check_subscribe_client,
+        'interval',
+        args=(orm,bot, i18n),
+        minutes=1
+    )
+    scheduler.start()
 
 if __name__ == "__main__":
     env = Environ()

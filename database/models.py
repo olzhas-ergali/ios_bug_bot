@@ -1,8 +1,8 @@
 from datetime import datetime
 from typing import Annotated
 
-from sqlalchemy import text, BigInteger
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import text, BigInteger, ForeignKey, DateTime, func, Boolean
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 intpk = Annotated[int, mapped_column(primary_key=True, autoincrement=True)]
 created_at_pk = Annotated[
@@ -52,3 +52,14 @@ class User(Base):
             result.append("phone_number")
         result.append("lang")
         return result
+
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+
+    id: Mapped[intpk]
+    user_id = mapped_column(BigInteger)
+    date_start = mapped_column(DateTime)
+    date_end = mapped_column(DateTime)
+    created_at = mapped_column(DateTime, server_default=func.now())
+    is_warn = mapped_column(Boolean, default=False)

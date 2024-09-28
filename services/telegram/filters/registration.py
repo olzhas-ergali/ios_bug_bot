@@ -9,9 +9,9 @@ class RegistrationFilter(BaseFilter):
 
     async def __call__(self, message: Message, state: FSMContext):
         data = await state.get_data()
-        columns: list = data["columns"]
+        columns: list = data.get("columns")
         print(self.filter_column, data)
-        if self.filter_column in columns:
+        if columns and self.filter_column in columns:
             columns.remove(self.filter_column)
             await state.update_data(columns=columns)
             return True

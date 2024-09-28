@@ -4,7 +4,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from database.database import ORM
 from services.telegram.handlers import registration
-from services.telegram.handlers.admin import registration as admin_registration, replace_panic
+from services.telegram.handlers.admin import registration as admin_registration, replace_panic, main as admin_main
 from services.telegram.handlers.analyzer import analyzer
 from services.telegram.handlers.home import home
 from services.telegram.middlewares.data import DataMiddleware
@@ -26,7 +26,7 @@ class TgRegister:
         # analyzer
         self.dp.include_routers(analyzer.router)
         # admin
-        self.dp.include_routers(admin_registration.router, replace_panic.router)
+        self.dp.include_routers(admin_registration.router, replace_panic.router, admin_main.router)
 
     def _register_middlewares(self):
         scheduler = AsyncIOScheduler(timezone="Asia/Almaty")
@@ -38,3 +38,5 @@ class TgRegister:
         self.dp.callback_query.middleware(i18n_middleware)
         self.dp.message.middleware(middleware)
         self.dp.message.middleware(i18n_middleware)
+        self.dp.inline_query.middleware(middleware)
+        self.dp.inline_query.middleware(i18n_middleware)

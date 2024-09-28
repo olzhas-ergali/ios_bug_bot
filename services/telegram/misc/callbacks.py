@@ -24,3 +24,15 @@ class AdminCallback(CallbackData, prefix="guest"):
 
 class LangCallback(CallbackData, prefix="lang"):
     lang: str
+
+
+class LangChangeCallBack(CallbackData, prefix="change_lang"):
+    action: str
+    lang: str
+
+class RenewSubscription(CallbackData, prefix="renew"):
+    user_id: int
+    months: int
+
+class ChooseModelCallback(CallbackData, prefix="choose_model"):
+    model: str

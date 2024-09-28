@@ -21,6 +21,7 @@ async def accept_guest(callback: CallbackQuery,
         chat_id=callback_data.user_id,
         text=i18n.gettext("Вы приняты, теперь вам доступен весь функционал 😄", locale=user.lang),
         reply_markup=Keyboards.home(i18n, user))
+    await orm.subscription_repo.set_subscription(callback_data.user_id, period=3)
 
 
 @router.callback_query(AdminCallback.filter(F.action == "cancel"))

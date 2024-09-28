@@ -1,10 +1,12 @@
+from aiogram.enums import ParseMode
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, \
-    InlineKeyboardButton, InlineKeyboardMarkup
+    InlineKeyboardButton, InlineKeyboardMarkup, InlineQuery, InlineQueryResultArticle, InputTextMessageContent
 from aiogram.utils.i18n import I18n
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from database.database import ORM
 from services.telegram.misc.callbacks import HomeCallback, CitySelect, \
-    AdminCallback, LangCallback, CountrySelect
+    AdminCallback, LangCallback, CountrySelect, LangChangeCallBack, RenewSubscription, ChooseModelCallback
 
 
 class Keyboards:
@@ -20,13 +22,25 @@ class Keyboards:
 
     @staticmethod
     def home(i18n: I18n, user) -> InlineKeyboardMarkup:
-        return InlineKeyboardMarkup(inline_keyboard=[
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
-                InlineKeyboardButton(text=i18n.gettext("Инструкция", locale=user.lang),
+                InlineKeyboardButton(text=i18n.gettext("Инструкция", locale=user.lang)+" 📕",
                                      callback_data=HomeCallback(
-                                         action="instruction").pack()),
+                                         action="instruction").pack())],
+            [
+                InlineKeyboardButton(text=i18n.gettext('Сменить язык', locale=user.lang)+" 🏳️",
+                                     callback_data=LangChangeCallBack(
+                                         action="change", lang="").pack())
+            ],
+            [
+                InlineKeyboardButton(text=i18n.gettext('Наш канал', locale=user.lang)+" 👥",
+                                     url="https://t.me/Yourrepairassistant")
             ]
         ])
+        if user.role == 'admin':
+            keyboard.inline_keyboard.append([InlineKeyboardButton(text=i18n.gettext("Продлить подписку", locale=user.lang)+" ⏳", switch_inline_query_current_chat="")])
+
+        return keyboard
 
     @staticmethod
     def back_to_home(i18n: I18n, user) -> InlineKeyboardMarkup:
@@ -78,12 +92,43 @@ class Keyboards:
         return builder.as_markup()
 
     @staticmethod
-    def lang():
+    def lang(is_menu=False):
         builder = InlineKeyboardBuilder()
         builder.button(
             text="Қазақ",
-            callback_data=LangCallback(lang="kk"))
+            callback_data=LangCallback(lang="kk") if not is_menu else LangChangeCallBack(action='changed', lang="kk"))
         builder.button(
             text="Русский",
-            callback_data=LangCallback(lang="ru"))
+            callback_data=LangCallback(lang="ru") if not is_menu else LangChangeCallBack(action='changed', lang="ru"))
+        return builder.as_markup()
+
+    @staticmethod
+    def months(user, i18n: I18n):
+        builder = InlineKeyboardBuilder()
+        builder.button(
+            text=i18n.gettext("1 месяц", locale=user.lang),
+            callback_data=RenewSubscription(user_id=user.user_id, months=1)
+        )
+        builder.button(
+            text=i18n.gettext("3 месяца", locale=user.lang),
+            callback_data=RenewSubscription(user_id=user.user_id, months=3)
+        )
+        builder.button(
+            text=i18n.gettext("6 месяцев", locale=user.lang),
+            callback_data=RenewSubscription(user_id=user.user_id, months=6)
+        )
+        builder.button(
+            text=i18n.gettext("1 год", locale=user.lang),
+            callback_data=RenewSubscription(user_id=user.user_id, months=12)
+        )
+        return builder.as_markup()
+
+    @staticmethod
+    def models(models):
+        builder = InlineKeyboardBuilder()
+        for i in models:
+            builder.button(
+                text=i,
+                callback_data=ChooseModelCallback(model=i)
+            )
         return builder.as_markup()
