@@ -85,7 +85,10 @@ async def photo_analyze(message: Message, user, orm: ORM, i18n, state: FSMContex
         msg = await message.answer(text=i18n.gettext(
             "К сожалению поиск ключевого слово по нашей базе анализов не дал результата. \n"
             "В скором времени добавим решение по данному анализу!", locale=user.lang))
+        await message.forward(orm.settings.channel_id)
         await msg.forward(orm.settings.channel_id)
+
+        await state.clear()
 
     # if model:
     #     if log_info["solutions"] or log_info["links"]:
