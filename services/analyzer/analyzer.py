@@ -1,5 +1,6 @@
 import json
 import re
+from typing import Any
 
 import openpyxl
 from openpyxl.cell import Cell
@@ -24,12 +25,12 @@ class LogAnalyzer:
             return file.read()
 
     @staticmethod
-    def get_jsons(text) -> dict:
+    def get_jsons(text) -> dict | None:
         try:
             text = "".join(text.split("\n")[1:])
             return json.loads(text)
         except:
-            print("asdasdasdasd")
+            return None
 
     @staticmethod
     def _read_photo(path, tesseract_path):
@@ -120,7 +121,7 @@ class LogAnalyzer:
                                 ...
 
                             models_result[model["name"]] = model_result
-                results.append(models_result)
+                        results.append(models_result)
             return results
 
     def get_model(self) -> list:
