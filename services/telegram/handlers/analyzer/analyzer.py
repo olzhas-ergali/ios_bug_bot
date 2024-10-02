@@ -24,10 +24,9 @@ async def document_analyze(message: Message, user, orm: ORM, i18n: I18n):
     log = LogAnalyzer(path, message.from_user.username)
     log_info = log.find_error_solutions()
     model = log.get_model()
+    await message.forward(orm.settings.channel_id)
     if model:
         if log_info:
-            await message.forward(orm.settings.channel_id)
-
             text = i18n.gettext("Инструкция по починке {}:"
                                 "\nНайденные ошибки: \n", locale=user.lang).format(model[0])
             msg = await message.answer(
@@ -59,7 +58,7 @@ async def document_analyze(message: Message, user, orm: ORM, i18n: I18n):
             msg = await message.answer(text=i18n.gettext(
                 "К сожалению поиск ключевого слово по нашей базе анализов не дал результата. \n"
                 "В скором времени добавим решение по данному анализу!", locale=user.lang))
-            await message.forward(orm.settings.channel_id)
+            await msg.forward(orm.settings.channel_id)
     else:
         msg = await message.answer(text=i18n.gettext("Не найдена модель устройства "
                                                      "{}", locale=user.lang).format(log.log_dict['product']))

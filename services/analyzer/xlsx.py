@@ -22,6 +22,9 @@ def is_valid_panic_xlsx(path: str):
     workbook = load_workbook(filename=path)
     sheet = workbook.active
     if path.endswith("panic_codes.xlsx"):
+        for row in range(3, sheet.max_row + 1):
+            print(sheet[f'A{row}'].value)
+            print(sheet[f'A{row}'].value.strip())
         is_column_valid = all(
             isinstance(sheet[f'A{row}'].value, str) and sheet[f'A{row}'].value.strip() != '' for row in
             range(3, sheet.max_row + 1))
