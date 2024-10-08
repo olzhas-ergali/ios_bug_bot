@@ -1,5 +1,7 @@
+import io
 import json
 import re
+import string
 from typing import Any
 
 import openpyxl
@@ -7,7 +9,6 @@ from openpyxl.cell import Cell
 from openpyxl.workbook import Workbook
 from pytesseract import pytesseract
 from PIL import Image, ImageGrab, ImageOps
-from openpyxl_image_loader import SheetImageLoader
 from openpyxl.utils import get_column_letter
 
 
@@ -18,6 +19,7 @@ class LogAnalyzer:
         self.log = self._read_log_file(path) if tesseract_path is None else self._read_photo(path, tesseract_path)
         self.log_dict = self.get_jsons(self.log) if tesseract_path is None else {}
         self.username = username
+        self._images = {}
 
     @staticmethod
     def _read_log_file(path):
@@ -36,13 +38,27 @@ class LogAnalyzer:
     def _read_photo(path, tesseract_path):
         img = Image.open(path)
         pytesseract.tesseract_cmd = tesseract_path
-        text = ' '.join(pytesseract.image_to_string(img, lang='eng').split())
-        print(text)
+        text = pytesseract.image_to_string(img, lang='eng')
         return text
+
+    def read_images(self, sheet):
+        sheet_images = sheet._images
+        for image in sheet_images:
+            row = image.anchor._from.row + 1
+            col = get_column_letter(image.anchor._from.col)
+            self._images[f'{col}{row}'] = image._data
+
+    def get_image(self, cell):
+        """Retrieves image data from a cell"""
+        if cell not in self._images:
+            raise ValueError("Cell {} doesn't contain an image".format(cell))
+        else:
+            image = io.BytesIO(self._images[cell]())
+            return Image.open(image)
 
     def find_error_solutions(self, is_photo=False):
         results = []
-        image_loader = SheetImageLoader(self.sheet)
+        self.read_images(self.sheet)
         if not is_photo:
             model_column = None
 
@@ -74,14 +90,14 @@ class LogAnalyzer:
                         result["links"].extend(links)
 
                         try:
-                            cell = f'{get_column_letter(model_column)}{index}'
-                            image = image_loader.get(cell)
+                            cell = f'{get_column_letter(model_column - 1)}{index}'
+                            image = self.get_image(cell)
                             path = f'./{self.username}{cell}.png'
 
                             image.save(path)
                             result["image"] = path
-                        except:
-                            ...
+                        except Exception as ex:
+                            print(ex)
 
                         results.append(result)
             return results
@@ -93,34 +109,36 @@ class LogAnalyzer:
                     models.append({"name": cell.value.lower().replace(" ", ""),
                                    "num": cell.column})
             rows = self.sheet.iter_rows(
-                min_row=1,
+                min_row=2,
                 values_only=True)
 
             for index, row in enumerate(rows, start=1):
                 models_result = {}
                 if row[0] is not None:
                     error_code = row[0].replace('“', '').replace('”', '')
-                    have_panic = re.search(re.escape(str(error_code)), self.log)
-                    if have_panic:
+                    have_panic = self.log.find(error_code)
+                    if have_panic != -1:
                         model_result = { "solutions": [], "links": [] }
-                        for i, model in enumerate(models, start=0):
-                            answer = row[model["num"] - 1].value.lower().replace(" ", "")
-                            solution, links = self.filter_cell(answer)
+                        for model in models:
+                            if row[model["num"] - 1] is not None:
+                                answer = row[model["num"] - 1].lower().replace(" ", "")
+                                solution, links = self.filter_cell(answer)
 
-                            model_result["solutions"].extend(solution)
-                            model_result["links"].extend(links)
+                                model_result["solutions"].extend(solution)
+                                model_result["links"].extend(links)
 
-                            try:
-                                cell = f'{get_column_letter(model["num"])}{index}'
-                                image = image_loader.get(cell)
-                                path = f'./{self.username}{cell}.png'
+                                try:
+                                    cell = f'{get_column_letter(model["num"])}{index}'
+                                    image = self.get_image(cell)
+                                    path = f'./{self.username}{cell}.png'
 
-                                image.save(path)
-                                model_result["image"] = path
-                            except:
-                                ...
+                                    image.save(path)
+                                    model_result["image"] = path
+                                except:
+                                    ...
 
-                            models_result[model["name"]] = model_result
+                                models_result[model["name"]] = model_result
+                    if models_result:
                         results.append(models_result)
             return results
 

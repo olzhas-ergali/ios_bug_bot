@@ -18,6 +18,4 @@
 # #saving the image
 # image.save('./image_name.jpg')
 
-asd = [1]
-if asd:
-    print('ggwp')
+print('Missing sensor(s): TGOB' == 'Missing sensor(s): TGOB')

@@ -8,6 +8,7 @@ from aiogram.utils.i18n import I18n
 from database.database import ORM
 from services.analyzer.analyzer import LogAnalyzer
 from services.telegram.filters.role import RoleFilter
+from .config import log_info_context
 from services.telegram.misc.callbacks import ChooseModelCallback
 from services.telegram.misc.keyboards import Keyboards
 
@@ -76,7 +77,7 @@ async def photo_analyze(message: Message, user, orm: ORM, i18n, state: FSMContex
     log = LogAnalyzer(path, message.from_user.username, orm.settings.tesseract_path)
     log_info = log.find_error_solutions(True)
 
-    await state.update_data(log_info=log_info, message_id=message.message_id)
+    log_info_context.set(log_info)
 
     if log_info:
         await message.answer(i18n.gettext("Выберите вашу модель телефона", locale=user.lang),
@@ -117,7 +118,7 @@ async def choose_model(callback: CallbackQuery,
     await callback.message.delete()
 
     data = await state.get_data()
-    log_info = data.get("log_info")
+    log_info = log_info_context.get()
 
     await callback.bot.forward_message(orm.settings.channel_id, callback.from_user.id, data.get("message_id"))
 
@@ -139,8 +140,8 @@ async def choose_model(callback: CallbackQuery,
             await msg.forward(orm.settings.channel_id)
             os.remove(model.get("image"))
 
-        msg = await callback.message.answer(problems, reply_markup=Keyboards.
-                                   links(model["links"], i18n, user) if model.get("links") else None)
+        msg = await callback.message.answer(problems,
+                                            reply_markup=Keyboards.links(model["links"], i18n, user) if model.get("links") else None)
         await msg.forward(orm.settings.channel_id)
 
     await msg.forward(orm.settings.channel_id)

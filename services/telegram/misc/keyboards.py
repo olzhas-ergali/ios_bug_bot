@@ -126,9 +126,11 @@ class Keyboards:
     @staticmethod
     def models(models):
         builder = InlineKeyboardBuilder()
-        for i in models:
-            builder.button(
-                text=i,
-                callback_data=ChooseModelCallback(model=i)
+        for model in models:
+            builder.row(
+                InlineKeyboardButton(
+                    text=model,
+                    callback_data=ChooseModelCallback(model=model).pack()
+                )
             )
         return builder.as_markup()
