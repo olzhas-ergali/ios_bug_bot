@@ -35,18 +35,20 @@ async def document_analyze(message: Message, user, orm: ORM, i18n: I18n):
             await msg.forward(orm.settings.channel_id)
 
             problems = ""
-            links = []
             for index, problem in enumerate(log_info, start=1):
                 sub_solutions = '\n'.join([i for i in problem.get('solutions')])
                 problems += f"{index}) {sub_solutions}"
-                links.extend(problem.get('links'))
 
                 if problem.get("image"):
                     msg = await message.bot.send_photo(message.from_user.id, FSInputFile(problem["image"]))
                     await msg.forward(orm.settings.channel_id)
                     os.remove(problem.get("image"))
 
-                msg = await message.answer(problems, reply_markup=Keyboards.links(problem["links"], i18n, user) if problem.get("links") else None)
+                btns = Keyboards.links(problem["links"], i18n, user)
+                if not problem["is_full"]:
+                    btns = Keyboards.add_full_btn(btns)
+
+                msg = await message.answer(problems, reply_markup=btns.as_markup())
                 await msg.forward(orm.settings.channel_id)
 
             # problems = '\n'.join([f"{i}) {p}" for i, p

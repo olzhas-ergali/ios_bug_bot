@@ -6,7 +6,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from database.database import ORM
 from services.telegram.misc.callbacks import HomeCallback, CitySelect, \
-    AdminCallback, LangCallback, CountrySelect, LangChangeCallBack, RenewSubscription, ChooseModelCallback
+    AdminCallback, LangCallback, CountrySelect, LangChangeCallBack, RenewSubscription, ChooseModelCallback, \
+    FullButtonCallback
 
 
 class Keyboards:
@@ -55,7 +56,7 @@ class Keyboards:
         for i, link in enumerate(links, start=1):
             builder.button(text=i18n.gettext("Материал {} 📎", locale=user.lang).format(i), url=link)
         builder.adjust(1, repeat=True)
-        return builder.as_markup()
+        return builder
 
     @staticmethod
     def countries(countries: dict):
@@ -134,3 +135,13 @@ class Keyboards:
                 )
             )
         return builder.as_markup()
+
+    @staticmethod
+    def add_full_btn(builder):
+        builder.row(
+            InlineKeyboardButton(
+                text='Полная версия инструкции',
+                callback_data=FullButtonCallback(action='show').pack()
+            )
+        )
+        return builder

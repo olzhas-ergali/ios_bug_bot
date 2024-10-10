@@ -116,7 +116,7 @@ async def select_city(callback: CallbackQuery,
                                "Город: {}\n"
                                "Номер: {}").format(user.fullname, user.affiliate, user.country, user.city, user.phone_number)
     await callback.bot.send_message(
-        orm.settings.channel_id,
+        orm.settings.application_channel_id,
         text=text_admins,
         reply_markup=Keyboards.guest(callback.from_user.id, i18n, user))
     await callback.bot.delete_message(

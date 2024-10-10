@@ -8,7 +8,7 @@ import openpyxl
 from openpyxl.cell import Cell
 from openpyxl.workbook import Workbook
 from pytesseract import pytesseract
-from PIL import Image, ImageGrab, ImageOps
+from PIL import Image
 from openpyxl.utils import get_column_letter
 
 
@@ -56,7 +56,7 @@ class LogAnalyzer:
             image = io.BytesIO(self._images[cell]())
             return Image.open(image)
 
-    def find_error_solutions(self, is_photo=False):
+    def find_error_solutions(self, is_photo=False, full_version=False):
         results = []
         self.read_images(self.sheet)
         if not is_photo:
@@ -78,9 +78,13 @@ class LogAnalyzer:
                 if row[0] is not None:
                     result = {
                         "solutions": [],
-                        "links": []
+                        "links": [],
+                        "is_full": True
                     }
                     error_code = row[0].replace('“', '').replace('”', '')
+                    if not full_version and error_code.find(" mini") != -1:
+                        error_code = error_code[0:error_code.find(" mini")]
+                        result['is_full'] = False
                     panic_string = "".join(self.log_dict.get("panicString", "").split("\n")[0:11])
                     if re.search(re.escape(str(error_code)), panic_string):
                         answer = row[model_column - 1]

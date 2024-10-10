@@ -15,6 +15,7 @@ class Environ:
         self.dev_mode = env.bool("DEV_MODE")
         self.admins = env.str("ADMINS").split(",")
         self.channel_id = env.str("CHANNEL_ID")
+        self.application_channel_id = env.str("APPLICATION_CHANNEL_ID")
         self.tesseract_path = env.str("TESSERACT_PATH")
 
     def psycopg_url(self):

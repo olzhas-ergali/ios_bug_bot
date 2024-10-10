@@ -36,3 +36,6 @@ class RenewSubscription(CallbackData, prefix="renew"):
 
 class ChooseModelCallback(CallbackData, prefix="choose_model"):
     model: str
+
+class FullButtonCallback(CallbackData, prefix="full_btn"):
+    action: str

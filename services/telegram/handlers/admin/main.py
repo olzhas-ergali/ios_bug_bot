@@ -25,7 +25,6 @@ router.inline_query.filter(RoleFilter(roles=["admin"]))
 
 @router.inline_query()
 async def find_user(inq: InlineQuery, orm: ORM):
-
     query = inq.query.strip()
     results = []
     users = await orm.user_repo.find_all()
