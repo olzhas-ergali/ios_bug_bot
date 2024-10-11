@@ -39,3 +39,5 @@ class ChooseModelCallback(CallbackData, prefix="choose_model"):
 
 class FullButtonCallback(CallbackData, prefix="full_btn"):
     action: str
+    error_code: str
+    model: str

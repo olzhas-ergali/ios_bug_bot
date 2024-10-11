@@ -137,11 +137,13 @@ class Keyboards:
         return builder.as_markup()
 
     @staticmethod
-    def add_full_btn(builder):
+    def add_full_btn(builder, error_code, model):
+        if error_code.find(':') != -1:
+            error_code = error_code.replace(':', 'doubledott')
         builder.row(
             InlineKeyboardButton(
                 text='Полная версия инструкции',
-                callback_data=FullButtonCallback(action='show').pack()
+                callback_data=FullButtonCallback(action='show', error_code=error_code, model=model).pack()
             )
         )
         return builder

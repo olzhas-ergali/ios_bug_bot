@@ -13,11 +13,12 @@ from openpyxl.utils import get_column_letter
 
 
 class LogAnalyzer:
-    def __init__(self, path, username, tesseract_path=None):
+    def __init__(self, path=None, username=None, tesseract_path=None):
         workbook: Workbook = openpyxl.load_workbook("./data/panic_codes.xlsx")
         self.sheet = workbook.active
-        self.log = self._read_log_file(path) if tesseract_path is None else self._read_photo(path, tesseract_path)
-        self.log_dict = self.get_jsons(self.log) if tesseract_path is None else {}
+        if path is not None:
+            self.log = self._read_log_file(path) if tesseract_path is None else self._read_photo(path, tesseract_path)
+            self.log_dict = self.get_jsons(self.log) if tesseract_path is None else {}
         self.username = username
         self._images = {}
 
@@ -56,16 +57,17 @@ class LogAnalyzer:
             image = io.BytesIO(self._images[cell]())
             return Image.open(image)
 
-    def find_error_solutions(self, is_photo=False, full_version=False):
+    def find_error_solutions(self, is_photo=False, error=None, model=None):
         results = []
         self.read_images(self.sheet)
         if not is_photo:
             model_column = None
 
             for cell in self.sheet[2]:
+                product = model if model is not None else self.log_dict["product"]
+                product = product.lower().replace(" ", "")
                 if isinstance(cell.value, str):
-                    if cell.value.lower().replace(" ", "") == \
-                            self.log_dict["product"].lower().replace(" ", ""):
+                    if cell.value.lower().replace(" ", "") == product:
                         model_column = cell.column
                         break
             if model_column is None:
@@ -74,6 +76,7 @@ class LogAnalyzer:
                 min_row=1,
                 max_col=model_column,
                 values_only=True)
+            is_mini = False
             for index, row in enumerate(rows, start=1):
                 if row[0] is not None:
                     result = {
@@ -82,10 +85,19 @@ class LogAnalyzer:
                         "is_full": True
                     }
                     error_code = row[0].replace('“', '').replace('”', '')
-                    if not full_version and error_code.find(" mini") != -1:
-                        error_code = error_code[0:error_code.find(" mini")]
-                        result['is_full'] = False
-                    panic_string = "".join(self.log_dict.get("panicString", "").split("\n")[0:11])
+                    if error is None and model is None:
+                        if error_code.find(" mini") != -1:
+                            error_code = error_code[0:error_code.find(" mini")]
+                            result['is_full'] = False
+                            result['error_code'] = error_code
+                        if is_mini:
+                            is_mini = False
+                            continue
+                        elif not result['is_full']:
+                            is_mini = True
+                        panic_string = "".join(self.log_dict.get("panicString", "").split("\n")[0:11])
+                    else:
+                        panic_string = error
                     if re.search(re.escape(str(error_code)), panic_string):
                         answer = row[model_column - 1]
                         solutions, links = self.filter_cell(answer)
@@ -102,7 +114,8 @@ class LogAnalyzer:
                             result["image"] = path
                         except Exception as ex:
                             print(ex)
-
+                        if error is not None:
+                            return result
                         results.append(result)
             return results
         else:
