@@ -46,7 +46,8 @@ async def instruction(callback: CallbackQuery, user, i18n: I18n):
 async def instruction(callback: CallbackQuery, user: User, i18n: I18n):
     await callback.message.edit_text(i18n.gettext("Приветствую @{}🙂🤝🏼"
                                                   "\nЯ помогу тебе с анализом сбоев"
-                                                  "\nОтправь мне файл или изображение и его проанализирую 🔬",
+                                                  # "\nОтправь мне файл или изображение и я его проанализирую 🔬"
+                                                  "\nОтправь мне файл и я его проанализирую 🔬",
                                                   locale=user.lang).format(user.username),
                                      reply_markup=Keyboards.home(i18n, user)
                                      )
@@ -64,7 +65,8 @@ async def instruction(callback: CallbackQuery, callback_data: CallbackData, i18n
     await callback.message.delete()
     await callback.message.answer(i18n.gettext("Приветствую @{}🙂🤝🏼"
                                       "\nЯ помогу тебе с анализом сбоев"
-                                      "\nОтправь мне файл или изображение и его проанализирую 🔬",
+                                      # "\nОтправь мне файл или изображение и я его проанализирую 🔬"
+                                      "\nОтправь мне файл и я его проанализирую 🔬",
                                       locale=user.lang).format(user.username),
                          reply_markup=Keyboards.home(i18n, user)
                          )
