@@ -20,7 +20,7 @@ async def ask_contact(message: Message,
                       i18n: I18n):
     user = await orm.user_repo.find_user_by_user_id(message.from_user.id)
     await state.update_data(columns=user.get_null_columns())
-    msg = await message.answer(text="Для регистрации нажмите на кнопку ⬇️",
+    msg = await message.answer(text='Для регистрации поделитесь, пожалуйста, номером телефона, нажав на кнопку "Поделится номером телефона" ниже 👇 \n\nНазвание кнопки "Поделится номером телефона"',
                                reply_markup=Keyboards.send_phone(i18n, user))
     await state.update_data(msg_id=msg.message_id)
 

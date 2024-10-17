@@ -96,10 +96,10 @@ class Keyboards:
     def lang(is_menu=False):
         builder = InlineKeyboardBuilder()
         builder.button(
-            text="Қазақ",
-            callback_data=LangCallback(lang="kk") if not is_menu else LangChangeCallBack(action='changed', lang="kk"))
+            text="English 🇺🇸",
+            callback_data=LangCallback(lang="en") if not is_menu else LangChangeCallBack(action='changed', lang="en"))
         builder.button(
-            text="Русский",
+            text="Русский 🇷🇺",
             callback_data=LangCallback(lang="ru") if not is_menu else LangChangeCallBack(action='changed', lang="ru"))
         return builder.as_markup()
 
