@@ -22,7 +22,7 @@ async def document_analyze(message: Message, user, orm: ORM, i18n: I18n):
     await message.chat.do("typing")
     path = f"data/tmp/{message.document.file_name}"
     await message.bot.download(file=message.document.file_id, destination=path)
-    log = LogAnalyzer(path, message.from_user.username)
+    log = LogAnalyzer(user.lang, path, message.from_user.username)
     log_info = log.find_error_solutions()
     model = log.get_model()
     await message.forward(orm.settings.channel_id)
@@ -63,8 +63,8 @@ async def document_analyze(message: Message, user, orm: ORM, i18n: I18n):
 
 
 @router.callback_query(FullButtonCallback.filter())
-async def show_full_version(callback: CallbackQuery, callback_data: FullButtonCallback):
-    log = LogAnalyzer(username=callback.from_user.username)
+async def show_full_version(callback: CallbackQuery, user, callback_data: FullButtonCallback):
+    log = LogAnalyzer(user.lang, username=callback.from_user.username)
     error_code = callback_data.error_code
     if error_code.find('doubledott') != -1:
         error_code = error_code.replace('doubledott', ':')
@@ -83,7 +83,7 @@ async def photo_analyze(message: Message, user, orm: ORM, i18n, state: FSMContex
     path = f"data/tmp/{file.file_unique_id}"
     await message.bot.download(file=message.photo[-1].file_id, destination=path)
     # photo
-    log = LogAnalyzer(path, message.from_user.username, orm.settings.tesseract_path)
+    log = LogAnalyzer(user.lang, path, message.from_user.username, orm.settings.tesseract_path)
     log_info = log.find_error_solutions(True)
 
     log_info_context.set(log_info)
