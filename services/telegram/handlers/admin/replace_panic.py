@@ -27,6 +27,12 @@ cities = dict(
     old=f"./data/old_cities/cities_{timestamp}.xlsx",
     name="cities.xlsx"
 )
+nand_list = dict(
+    new=f"./data/verifying.nand_list.xlsx",
+    exist=f"./data/nand_list.xlsx",
+    old=f"./data/old_cities/nand_list_{timestamp}.xlsx",
+    name="nand_list.xlsx"
+)
 
 
 @router.message(F.document.file_name.endswith(".xlsx"))
@@ -36,8 +42,10 @@ async def replace_panic_file(message: Message, i18n: I18n, orm: ORM):
         paths = panic_codes
     elif message.document.file_name.startswith("cities"):
         paths = cities
+    elif message.document.file_name.startswith("nand_list"):
+        paths = nand_list
     else:
-        return await message.answer(i18n.gettext("Можно заменить только файлы cities и panic_codes❗️"))
+        return await message.answer(i18n.gettext("Можно заменить только файлы cities, panic_codes и nand_list❗️"))
 
     await message.bot.download(file=message.document.file_id, destination=paths["new"])
     if is_valid_panic_xlsx(paths["new"]):

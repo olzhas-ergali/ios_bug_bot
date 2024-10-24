@@ -23,9 +23,9 @@ router.inline_query.filter(RoleFilter(roles=["admin"]))
 #                        i18n: I18n):
 #     await callback.message.edit_text(i18n.gettext("Введите id пользователя"))
 
-@router.inline_query()
+@router.inline_query(F.query.startswith('user '))
 async def find_user(inq: InlineQuery, orm: ORM):
-    query = inq.query.strip()
+    query = inq.query[5:]
     results = []
     users = await orm.user_repo.find_all()
     users = filter(lambda x: x.username.find(query) != -1

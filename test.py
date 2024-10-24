@@ -1,4 +1,3 @@
-asd = 'asd:ss'
-asd.replace(':', 'sui')
+asd = list(range(1, 56))
 
-print(asd)
+print(asd[:50])

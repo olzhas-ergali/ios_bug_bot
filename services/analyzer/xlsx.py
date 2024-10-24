@@ -39,6 +39,22 @@ def is_valid_panic_xlsx(path: str):
                 result = all([is_column_valid, is_rows_valid])
                 if not result:
                     return False
+            if path.endswith("nand_list.xlsx"):
+                print(sheet.max_row)
+                for row in range(2, sheet.max_row + 1):
+                    print(sheet[f'A{row}'].value)
+                    print(sheet[f'A{row}'].value.strip())
+                is_column_valid = all(
+                    isinstance(sheet[f'A{row}'].value, str) and sheet[f'A{row}'].value.strip() != '' for row in
+                    range(2, sheet.max_row + 1))
+
+                is_rows_valid = all(
+                    isinstance(sheet.cell(row=1, column=col).value, str) and sheet.cell(row=1, column=col).value.strip() != ''
+                    for col in range(2, sheet.max_column + 1)  # начиная с столбца 'B'
+                )
+                result = all([is_column_valid, is_rows_valid])
+                if not result:
+                    return False
             elif path.endswith("cities.xlsx"):
                 for row in sheet.iter_rows(min_row=2, max_col=1, values_only=True):
                     cell_value = row[0]

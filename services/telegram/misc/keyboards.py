@@ -36,10 +36,14 @@ class Keyboards:
             [
                 InlineKeyboardButton(text=i18n.gettext('Наш канал', locale=user.lang)+" 👥",
                                      url="https://t.me/Yourrepairassistant")
+            ],
+            [
+                InlineKeyboardButton(text=i18n.gettext('Справочник дисков', locale=user.lang)+" 📚",
+                                     switch_inline_query_current_chat="disk ")
             ]
         ])
         if user.role == 'admin':
-            keyboard.inline_keyboard.append([InlineKeyboardButton(text=i18n.gettext("Продлить подписку", locale=user.lang)+" ⏳", switch_inline_query_current_chat="")])
+            keyboard.inline_keyboard.append([InlineKeyboardButton(text=i18n.gettext("Продлить подписку", locale=user.lang)+" ⏳", switch_inline_query_current_chat="user ")])
 
         return keyboard
 

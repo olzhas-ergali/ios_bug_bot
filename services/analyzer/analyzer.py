@@ -1,11 +1,8 @@
 import io
 import json
 import re
-import string
-from typing import Any
 
 import openpyxl
-from openpyxl.cell import Cell
 from openpyxl.workbook import Workbook
 from pytesseract import pytesseract
 from PIL import Image
@@ -50,7 +47,6 @@ class LogAnalyzer:
             self._images[f'{col}{row}'] = image._data
 
     def get_image(self, cell):
-        """Retrieves image data from a cell"""
         if cell not in self._images:
             raise ValueError("Cell {} doesn't contain an image".format(cell))
         else:
