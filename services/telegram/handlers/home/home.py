@@ -105,7 +105,7 @@ async def find_command(message: Message, user: User, orm: ORM, i18n: I18n):
     model_row = message.text.split("\n")[2].split()[-1]
 
     nand = NandList()
-    answer = nand.find_info(dict(name=model_name, row=model_row), 'info ru')
+    answer = nand.find_info(dict(name=model_name, row=model_row), user.lang)
     if answer:
         await message.answer(answer)
     else:
