@@ -10,12 +10,16 @@ def get_cities():
         country = row[0]
         city = row[1]
 
+        if pd.isna(country) or pd.isna(city):
+            continue  
+
         if country in result:
             result[country].append(city)
         else:
             result[country] = [city]
 
     return result
+
 
 
 def is_valid_panic_xlsx(path: str):

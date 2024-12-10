@@ -3,9 +3,11 @@ from sqlalchemy import select
 
 from database.models import User
 from database.repo.repo import Repo
+from typing import List, Optional
 
 
 class UserRepo(Repo):
+    
     async def find_all(self) -> list[User]:
         async with self.sessionmaker() as session:
             query = select(User)
@@ -37,6 +39,12 @@ class UserRepo(Repo):
             await session.commit()
 
             return new_user
+        
+    async def get_users_by_language(self, lang: str) -> List[User]:
+        async with self.sessionmaker() as session:
+            query = select(User).filter_by(lang=lang)
+            result = await session.scalars(query)
+            return result.all() if result else [] 
 
     @staticmethod
     def create_user_from_contact(message: Message) -> User:
@@ -65,4 +73,21 @@ class UserRepo(Repo):
                 user = User(**user_data)
                 session.add(user)
             await session.commit()
+            return user
+        
+
+    async def get_admins(self) -> list[User]:
+        async with self.sessionmaker() as session:
+            query = select(User).filter_by(role='admin')
+            result = await session.scalars(query)
+            return result.all() or []
+        
+    async def get_or_create_user(self, user_id: int, username: Optional[str] = None) -> User:
+        async with self.sessionmaker() as session:
+            query = select(User).filter_by(user_id=user_id)
+            user = await session.scalar(query)
+            if not user:
+                user = User(user_id=user_id, username=username)
+                session.add(user)
+                await session.commit()
             return user

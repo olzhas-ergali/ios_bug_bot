@@ -7,8 +7,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2024-09-08 21:42+0500\n"
-"PO-Revision-Date: 2024-09-08 21:43+0500\n"
+"POT-Creation-Date: 2024-11-03 21:13+0500\n"
+"PO-Revision-Date: 2024-11-03 21:34+0500\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language: en\n"
 "Language-Team: en <LL@li.org>\n"
@@ -18,9 +18,51 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.13.1\n"
 
+msgid "Для регистрации поделитесь, пожалуйста, номером телефона, нажав на кнопку 'Поделиться номером телефона' ниже 👇"
+msgstr "To complete your registration, please share your phone number by pressing the 'Share phone number' button below 👇"
+
+msgid "Наш канал 👥"
+msgstr "Our channel 👥"
+
+msgid "Справочник дисков 📚"
+msgstr "Disc guide 📚"
+
+msgid "Инструкция 📕"
+msgstr "Instruction 📕"
+
+msgid "Сменить язык 🏳️"
+msgstr "Change language 🏳️"
+
+msgid "Получить консультацию 📞"
+msgstr "Request consultation 📞"
+
+msgid "Язык успешно изменен. Возвращаю вас на главный экран:"
+msgstr "Language successfully changed. Returning to the main screen:"
+
+msgid "У вас нет доступа к этому действию."
+msgstr "You do not have access to this action."
+
+msgid "Отправьте файл Excel с данными пользователей."
+msgstr "Send an Excel file with user data."
+
+msgid "Ошибка при обработке файла: {}"
+msgstr "Error processing the file: {}"
+
+msgid "Ошибка: список пользователей пуст."
+msgstr "Error: the user list is empty."
+
+msgid "Рассылка успешно завершена."
+msgstr "Broadcast successfully completed."
+
+msgid "Рассылка всем пользователям на русском"
+msgstr "Mailing to all users in Russian"
+
+msgid "Рассылка всем пользователям на английском"
+msgstr "Mailing to all users in English"
+
 #: services/telegram/handlers/registration.py:35
 msgid "Выберите язык"
-msgstr "Select a language"
+msgstr "Choose a language"
 
 #: services/telegram/handlers/registration.py:47
 msgid "Как вас зовут?"
@@ -32,12 +74,12 @@ msgstr "Where do you work?"
 
 #: services/telegram/handlers/registration.py:77
 msgid "Выберите страну"
-msgstr "Select a country"
+msgstr "Choose a country"
 
 #: services/telegram/handlers/registration.py:87
 #: services/telegram/handlers/registration.py:97
 msgid "Выберите город"
-msgstr "Select a city"
+msgstr "Choose a city"
 
 #: services/telegram/handlers/registration.py:113
 msgid ""
@@ -48,10 +90,10 @@ msgid ""
 "Номер: {}"
 msgstr ""
 "Name: {}\n"
-"Workplace: {}\n"
+"Place of work: {}\n"
 "Country: {}\n"
 "City: {}\n"
-"Phone number: {}"
+"Number: {}"
 
 #: services/telegram/handlers/registration.py:127
 msgid ""
@@ -60,6 +102,24 @@ msgid ""
 msgstr ""
 "Thank you for the provided information!\n"
 "Please wait while the admin reviews your application ⌛️"
+
+#: services/telegram/handlers/admin/main.py:58
+msgid "Выберите длительность подписки"
+msgstr "Choose subscription duration"
+
+#: services/telegram/handlers/admin/main.py:65
+msgid "Вы успешно продлили подписку пользователя @{}"
+msgstr "You have successfully extended the subscription of user @{}"
+
+#: services/telegram/handlers/admin/main.py:67
+msgid ""
+"Вам продлили подписку \n"
+"Срок ее окончания: \n"
+"{}"
+msgstr ""
+"Your subscription has been extended \n"
+"It expires on: \n"
+"{}"
 
 #: services/telegram/handlers/admin/registration.py:18
 msgid ""
@@ -71,9 +131,9 @@ msgstr ""
 
 #: services/telegram/handlers/admin/registration.py:22
 msgid "Вы приняты, теперь вам доступен весь функционал 😄"
-msgstr "You have been accepted, now all functionalities are available to you 😄"
+msgstr "You have been accepted, now all features are available to you 😄"
 
-#: services/telegram/handlers/admin/registration.py:33
+#: services/telegram/handlers/admin/registration.py:34
 msgid ""
 "\n"
 "Пользователь отклонен ❌"
@@ -81,86 +141,156 @@ msgstr ""
 "\n"
 "User rejected ❌"
 
-#: services/telegram/handlers/admin/replace_panic.py:40
-msgid "Можно заменить только файлы cities и panic_codes❗️"
-msgstr "Only cities and panic_codes files can be replaced❗️"
+#: services/telegram/handlers/admin/replace_panic.py:48
+msgid "Можно заменить только файлы cities, panic_codes и nand_list❗️"
+msgstr "Only the files cities, panic_codes, and nand_list can be replaced❗️"
 
-#: services/telegram/handlers/analyzer/analyzer.py:29
+#: services/telegram/handlers/analyzer/analyzer.py:31
+#: services/telegram/handlers/analyzer/analyzer.py:134
 msgid ""
 "Инструкция по починке {}:\n"
 "Найденные ошибки: \n"
-"{}"
 msgstr ""
 "Repair instructions for {}:\n"
 "Found errors: \n"
-"{}"
 
-#: services/telegram/handlers/analyzer/analyzer.py:34
+#: services/telegram/handlers/analyzer/analyzer.py:54
+#: services/telegram/handlers/analyzer/analyzer.py:95
 msgid ""
 "К сожалению поиск ключевого слово по нашей базе анализов не дал "
 "результата. \n"
 "В скором времени добавим решение по данному анализу!"
 msgstr ""
-"Unfortunately, searching by keyword in our analysis database did not yield any results.\n"
+"Unfortunately, the search for the keyword in our analysis database did not yield any results. \n"
 "We will soon add a solution for this analysis!"
 
-#: services/telegram/handlers/analyzer/analyzer.py:38
+#: services/telegram/handlers/analyzer/analyzer.py:59
 msgid "Не найдена модель устройства {}"
 msgstr "Device model {} not found"
 
-#: services/telegram/handlers/home/home.py:19
-#: services/telegram/handlers/home/home.py:42
+#: services/telegram/handlers/analyzer/analyzer.py:92
+msgid "Выберите вашу модель телефона"
+msgstr "Choose your phone model"
+
+#: services/telegram/handlers/home/home.py:23
+#: services/telegram/handlers/home/home.py:49
+#: services/telegram/handlers/home/home.py:68
 msgid ""
 "Приветствую @{}🙂🤝🏼\n"
 "Я помогу тебе с анализом сбоев\n"
-"Отправь мне файл или изображение и его проанализирую 🔬"
+"Отправь мне файл и я его проанализирую 🔬"
 msgstr ""
 "Welcome @{}🙂🤝🏼\n"
-"I will help you with error analysis\n"
-"Send me a file or image and I will analyze it 🔬"
+"I will help you with failure analysis\n"
+"Send me the file and I will analyze it 🔬"
 
-#: services/telegram/handlers/home/home.py:30
+#: services/telegram/handlers/home/home.py:35
 msgid ""
-"Для отправки файла Panic заходим в:\n"
-"Настройки » Конфиденциальность и безопасность » Аналитика и улучшения » "
-"Данные Аналитики…\n"
-"Далее находим из списка файл под названием panic-full и делимся на "
-"устройства где работает наш бот (Для получения достоверной информации из "
-"файла диагностики отправьте несколько последних файлов panic)"
+"Для отправки файла Panic выполните следующие шаги: \n"
+"\n"
+"1. Откройте Настройки.\n"
+"2. Выберите Конфиденциальность и безопасность.\n"
+"3. Перейдите в раздел Аналитика и улучшения.\n"
+"4. Откройте Данные аналитики. \n"
+"\n"
+"Найдите в списке файл с названием panic-full и отправьте его на "
+"устройство, где работает наш бот. Для этого используйте кнопку в верхнем "
+"правом углу и выберите AirDrop. \n"
+"\n"
+"Важно: для получения наиболее точной информации из файла диагностики "
+"отправьте несколько последних файлов panic.\n"
 msgstr ""
-"To send a Panic file, go to:\n"
-"Settings » Privacy and Security » Analytics and Improvements » "
-"Analytics Data…\n"
-"Then, find a file named panic-full from the list and share it to the devices where our bot is active. (To obtain accurate information from the diagnostic file, send the last few panic files)"
+"To send the Panic file, follow these steps: \n"
+"\n"
+"1. Open Settings.\n"
+"2. Select Privacy and Security.\n"
+"3. Go to Analytics & Improvements.\n"
+"4. Open Analytics Data. \n"
+"\n"
+"Find the file named panic-full in the list and send it to the device where our bot is running. To do this, use the button in the upper right corner and select AirDrop. \n"
+"\n"
+"Important: To obtain the most accurate information from the diagnostic file, send several of the latest panic files.\n"
 
-#: services/telegram/handlers/home/home.py:52
-msgid "Мои создатель... жив?"
-msgstr "Is my creator... alive?"
+#: services/telegram/handlers/home/home.py:112
+msgid "К сожалению данные по {} не найдены"
+msgstr "Unfortunately, data for {} not found"
 
-#: services/telegram/misc/keyboards.py:17
+#: services/telegram/handlers/home/home.py:117
+msgid "Мой создатель... жив?"
+msgstr "My creator... alive?"
+
+#: services/telegram/handlers/home/home.py:122
+msgid "Это мой хозяин!!!!"
+msgstr "That's my master!!!!"
+
+#: services/telegram/jobs/tasks.py:14
+msgid ""
+"Ваша подписка истекла \n"
+"Обратитесь к админу чтобы вам продлили подписку"
+msgstr ""
+"Your subscription has expired \n"
+"Please contact the admin to extend your subscription"
+
+#: services/telegram/jobs/tasks.py:23
+msgid ""
+"Ваша подписка истекает через сутки \n"
+"Обратитесь к админу чтобы вам продлили подписку"
+msgstr ""
+"Your subscription expires in one day \n"
+"Please contact the admin to extend your subscription"
+
+#: services/telegram/misc/keyboards.py:20
 msgid "Поделиться номером телефона"
 msgstr "Share phone number"
 
-#: services/telegram/misc/keyboards.py:25
+#: services/telegram/misc/keyboards.py:28
 msgid "Инструкция"
 msgstr "Instructions"
 
-#: services/telegram/misc/keyboards.py:34
+#: services/telegram/misc/keyboards.py:32
+msgid "Сменить язык"
+msgstr "Change language"
+
+#: services/telegram/misc/keyboards.py:37
+msgid "Наш канал"
+msgstr "Our channel"
+
+#: services/telegram/misc/keyboards.py:41
+msgid "Справочник дисков"
+msgstr "Disk directory"
+
+#: services/telegram/misc/keyboards.py:46
+msgid "Продлить подписку"
+msgstr "Extend subscription"
+
+#: services/telegram/misc/keyboards.py:53
 msgid "Назад ◀️"
 msgstr "Back ◀️"
 
-#: services/telegram/misc/keyboards.py:42
+#: services/telegram/misc/keyboards.py:61
 msgid "Материал {} 📎"
 msgstr "Material {} 📎"
 
-#: services/telegram/misc/keyboards.py:73
+#: services/telegram/misc/keyboards.py:92
 msgid "Принять ✅"
 msgstr "Accept ✅"
 
-#: services/telegram/misc/keyboards.py:76
+#: services/telegram/misc/keyboards.py:95
 msgid "Отклонить ❌"
 msgstr "Reject ❌"
 
-#: venv/Lib/site-packages/isort/main.py:158
-msgid "show this help message and exit"
-msgstr "Show this help message and exit"
+#: services/telegram/misc/keyboards.py:114
+msgid "1 месяц"
+msgstr "1 month"
+
+#: services/telegram/misc/keyboards.py:118
+msgid "3 месяца"
+msgstr "3 months"
+
+#: services/telegram/misc/keyboards.py:122
+msgid "6 месяцев"
+msgstr "6 months"
+
+#: services/telegram/misc/keyboards.py:126
+msgid "1 год"
+msgstr "1 year"

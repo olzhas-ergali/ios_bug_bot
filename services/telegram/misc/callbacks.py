@@ -41,3 +41,10 @@ class FullButtonCallback(CallbackData, prefix="full_btn"):
     action: str
     error_code: str
     model: str
+
+class BroadcastLangCallback(CallbackData, prefix="broadcast_lang"):
+    lang: str
+
+class BroadcastCallback(CallbackData, prefix="broadcast"):
+    action: str
+    user_id: int

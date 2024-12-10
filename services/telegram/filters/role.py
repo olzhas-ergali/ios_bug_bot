@@ -13,5 +13,5 @@ class RoleFilter(BaseFilter):
         await orm.create_repos()
         user = await orm.user_repo.find_user_by_user_id(message.from_user.id)
         if user.role in self.roles:
-            return True
+            return True 
         return False
