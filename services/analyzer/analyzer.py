@@ -21,12 +21,8 @@ class LogAnalyzer:
 
     @staticmethod
     def _read_log_file(path):
-        try:
-            with open(path, mode="r") as file:
-                return file.read()
-        except UnicodeDecodeError:
-            with open(path, mode="rb") as file:
-                return file.read().decode('utf-8', errors='ignore')
+        with open(path, mode="r") as file:
+            return file.read()
 
     @staticmethod
     def get_jsons(text) -> dict | None:
