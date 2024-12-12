@@ -91,17 +91,6 @@ async def back_to_home(message: Message, user: User, i18n: I18n):
         reply_markup=Keyboards.home(i18n, user))
 
 
-@router.message(F.document.file_name.endswith((".ips", ".txt", ".xlsx")))
-async def handle_document_upload(message: Message, user: User, i18n: I18n, orm: ORM, bot: Bot):
-    if user.role != 'user':
-        await message.answer(i18n.gettext("У вас нет доступа к этой функции", locale=user.lang))
-        return
-
-    await message.answer(
-        i18n.gettext("Получить консультацию", locale=user.lang),
-        reply_markup=Keyboards.get_consultation(i18n, user)
-    )
-
 @router.message(F.text == "Получить консультацию 📞")
 async def handle_get_consultation(message: Message, user: User, i18n: I18n, orm: ORM, bot: Bot,state:FSMContext):
     await message.answer(i18n.gettext("Ваш запрос на консультацию получен!", locale=user.lang))
