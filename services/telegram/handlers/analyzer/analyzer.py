@@ -77,6 +77,7 @@ async def show_full_version(callback: CallbackQuery, user, callback_data: FullBu
 
 @router.message(F.photo)
 async def photo_analyze(message: Message, user, orm: ORM, i18n, state: FSMContext):
+    return
     await message.chat.do("typing")
     file = await message.bot.get_file(message.photo[-1].file_id)
     path = f"data/tmp/{file.file_unique_id}"
