@@ -1,4 +1,6 @@
 from aiogram import Router, F, Bot
+import logging
+
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -91,7 +93,7 @@ async def back_to_home(message: Message, user: User, i18n: I18n):
         reply_markup=Keyboards.home(i18n, user))
 
 
-@router.message(F.text == "Получить консультацию 📞")
+@router.message(F.text == "Получить консультацию" + " 📞")
 async def handle_get_consultation(message: Message, user: User, i18n: I18n, orm: ORM, bot: Bot,state:FSMContext):
     await message.answer(i18n.gettext("Ваш запрос на консультацию получен!", locale=user.lang))
     await message.delete()
@@ -99,9 +101,7 @@ async def handle_get_consultation(message: Message, user: User, i18n: I18n, orm:
         i18n.gettext("Вы можете вернуться на главную", locale=user.lang),
         reply_markup=Keyboards.back_to_home(i18n, user)
     )
-
     admins = await orm.user_repo.get_admins()
-    
     if admins:
         for admin in admins:
             message_text = i18n.gettext(
@@ -111,61 +111,61 @@ async def handle_get_consultation(message: Message, user: User, i18n: I18n, orm:
         if user.username:
             message_text += f"\n\nНаписать в Telegram: [t.me/{user.username}](https://t.me/{user.username})"
         await bot.send_message(chat_id=admin.user_id, text=message_text, parse_mode="Markdown")
-    await state.finish()
 
-@router.message(F.text == ("Disc guide") + " 📚")
-@router.message(F.text == ("Справочник дисков") + " 📚")
+
+@router.message(F.text.in_([("Disc guide") + " 📚", ("Справочник дисков") + " 📚"]))
 @router.inline_query(F.query.startswith('disk '))
-async def find_disk(inq: InlineQuery):
-    query = inq.query[5:]
-    results = []
+async def find_disk(inq: InlineQuery, message: Message = None):
+    query = inq.query[5:] if inq.query else message.text.split("\n")[1].split()[-1]  
+
+    nand = NandList()
+    models = nand.get_models()
     if query:
-        nand = NandList()
-        models = nand.get_models()
-        if query != '':
-            models = list(filter(lambda x: x['name'].lower().find(query) != -1, models))
-        for model in (models if len(models) < 50 else models[:50]):
+        models = [model for model in models if query.lower() in model['name'].lower()]
+
+    results = []
+    for model in (models if len(models) < 50 else models[:50]):
+        if inq: 
             results.append(
                 InlineQueryResultArticle(
                     id=str(model['row']),
                     title=f'{model["name"]}',
                     input_message_content=InputTextMessageContent(
-                        message_text="/disk\n"
-                                     "Диск {}\n"
-                                     "Номер: {}\n".format(model['name'], model['row']),
+                        message_text=f"/disk\nДиск {model['name']}\nНомер: {model['row']}",
                         parse_mode=ParseMode.HTML
                     )
                 )
             )
-    await inq.answer(results=results, cache_time=10)
+        else: 
+            await message.answer(f"/disk\nДиск {model['name']}\nНомер: {model['row']}")
 
+    if inq:
+        await inq.answer(results=results, cache_time=10)
 
-@router.message(Command("disk"))
+@router.message(F.text == Command("disk"))
 async def find_command(message: Message, user: User, orm: ORM, i18n: I18n):
-    model_name = message.text.split("\n")[1].split()[-1]
-    model_row = message.text.split("\n")[2].split()[-1]
+    try:
+        model_name = message.text.split("\n")[1].split()[-1]
+        model_row = message.text.split("\n")[2].split()[-1]
 
-    nand = NandList()
-    answer = nand.find_info(dict(name=model_name, row=model_row), user.lang)
-    if answer:
-        await message.answer(answer)
+        nand = NandList()
+        answer = nand.find_info(dict(name=model_name, row=model_row), user.lang)
+        if answer:
+            await message.answer(answer)
+        else:
+            await message.answer(i18n.gettext("К сожалению данные по {} не найдены", locale=user.lang).format(model_name))
+    except Exception as e:
+        await message.answer(i18n.gettext("Произошла ошибка при обработке запроса", locale=user.lang))
+        logging.error(f"Error processing /disk command: {e}")
+
+@router.message(F.text == "Админ панель ⚙️")
+async def open_admin_panel(message: Message, user: User, i18n: I18n):
+    if user.role == 'admin':
+        admin_keyboard = Keyboards.admin_panel(i18n, user)
+        await message.answer(i18n.gettext("Добро пожаловать в админ панель!", locale=user.lang), reply_markup=admin_keyboard)
     else:
-        await message.answer(i18n.gettext("К сожалению данные по {} не найдены", locale=user.lang).format(model_name))
+        await message.answer(i18n.gettext("У вас нет доступа к админ панели.", locale=user.lang))
 
-
-
-@router.message(F.text == "alfinkly")
-async def info(message: Message, user, i18n: I18n):
-    await message.answer(i18n.gettext("Мой создатель... жив?", locale=user.lang))
-
-
-@router.message(F.text == "dokuzu")
-async def info(message: Message, user, i18n: I18n):
-    await message.answer(i18n.gettext("Это мой хозяин!!!!", locale=user.lang))
-
-@router.message(F.text == "onyoka")
-async def info(message: Message, user, i18n: I18n):
-    await message.answer(i18n.gettext("К Вашим услугам!!!!", locale=user.lang))
 
 @router.callback_query(F.data == "nothing")
 async def nothing(callback: CallbackQuery):
