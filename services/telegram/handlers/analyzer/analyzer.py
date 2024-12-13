@@ -25,13 +25,14 @@ async def document_analyze(message: Message, user, orm: ORM, i18n: I18n):
     log = LogAnalyzer(user.lang, path, message.from_user.username)
     log_info = log.find_error_solutions()
     model = log.get_model()
+
     await message.forward(orm.settings.channel_id)
+
     if model:
         if log_info:
             text = i18n.gettext("Инструкция по починке {}:"
                                 "\nНайденные ошибки: \n", locale=user.lang).format(model[0])
-            msg = await message.answer(
-                text=text)
+            msg = await message.answer(text=text)
             await msg.forward(orm.settings.channel_id)
 
             problems = ""
@@ -50,20 +51,36 @@ async def document_analyze(message: Message, user, orm: ORM, i18n: I18n):
 
                 msg = await message.answer(problems, reply_markup=btns.as_markup())
                 await msg.forward(orm.settings.channel_id)
+
+            await message.answer(
+                i18n.gettext("Получить консультацию", locale=user.lang),
+                reply_markup=Keyboards.get_consultation(i18n, user)
+            )
         else:
-            msg = await message.answer(text=i18n.gettext(
-                "К сожалению поиск ключевого слово по нашей базе анализов не дал результата. \n"
-                "В скором времени добавим решение по данному анализу!", locale=user.lang))
+            msg = await message.answer(
+                text=i18n.gettext(
+                    "К сожалению, поиск ключевого слова по нашей базе анализов не дал результата. \n"
+                    "В скором времени добавим решение по данному анализу!", locale=user.lang)
+            )
             await msg.forward(orm.settings.channel_id)
+
+            await message.answer(
+                i18n.gettext("Получить консультацию", locale=user.lang),
+                reply_markup=Keyboards.get_consultation(i18n, user)
+            )
     else:
-        msg = await message.answer(text=i18n.gettext("Не найдена модель устройства "
-                                                     "{}", locale=user.lang).format(log.log_dict['product']))
+        msg = await message.answer(
+            text=i18n.gettext("Не найдена модель устройства: {}", locale=user.lang).format(log.log_dict['product'])
+        )
         await msg.forward(orm.settings.channel_id)
+
         await message.answer(
             i18n.gettext("Получить консультацию", locale=user.lang),
             reply_markup=Keyboards.get_consultation(i18n, user)
         )
+
     os.remove(path)
+
 
 
 @router.callback_query(FullButtonCallback.filter())
