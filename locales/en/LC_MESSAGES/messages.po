@@ -33,8 +33,10 @@ msgstr "Instruction 📕"
 msgid "Сменить язык 🏳️"
 msgstr "Change language 🏳️"
 
-msgid "Получить консультацию 📞"
-msgstr "Request consultation 📞"
+msgid "Получить консультацию 📧"
+msgstr "Request consultation 📧"
+
+
 
 msgid "Язык успешно изменен. Возвращаю вас на главный экран:"
 msgstr "Language successfully changed. Returning to the main screen:"
