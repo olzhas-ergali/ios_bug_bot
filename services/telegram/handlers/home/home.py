@@ -1,12 +1,12 @@
 from aiogram import Router, F, Bot
+
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
-from aiogram.types import Message, CallbackQuery
 from services.analyzer.nand import NandList
 from services.telegram.misc.keyboards import Keyboards
-from aiogram.types import Message, CallbackQuery, InlineQuery, InlineQueryResultArticle, InputTextMessageContent
+from aiogram.types import Message, CallbackQuery, InlineQuery, InlineQueryResultArticle, InputTextMessageContent,InlineKeyboardMarkup,InlineKeyboardButton
 from aiogram.utils.i18n import I18n
 from database.database import ORM
 from database.models import User 
@@ -16,6 +16,7 @@ from services.telegram.misc.callbacks import LangCallback
 router = Router()
 router.message.filter(RoleFilter(roles=["admin", "user"]))
 router.callback_query.filter(RoleFilter(roles=["admin", "user"]))
+CHANNEL_URL = "https://t.me/Yourrepairassistant"
 
 
 @router.message(F.text == "Главная")
@@ -90,15 +91,13 @@ async def back_to_home(message: Message, user: User, i18n: I18n):
             locale=user.lang).format(user.username),
         reply_markup=Keyboards.home(i18n, user))
 
+@router.message(F.text == "Наш канал " + "👥")
+@router.message(F.text == "Our channel " + "👥")
+async def open_channel(message: Message):
+    await message.answer(f"Перейдите по ссылке: {CHANNEL_URL}")
 
-@router.message(F.document.file_name.endswith((".ips", ".txt", ".xlsx")))
-async def handle_document_upload(message: Message, user: User, i18n: I18n, orm: ORM, bot: Bot):
-    await message.answer(
-        i18n.gettext("Получить консультацию", locale=user.lang),
-        reply_markup=Keyboards.get_consultation(i18n, user)
-    )
-
-@router.message(F.text == "Получить консультацию 📞")
+@router.message(F.text == "Get a consultation" + " 📧")
+@router.message(F.text == "Получить консультацию" + " 📧")
 async def handle_get_consultation(message: Message, user: User, i18n: I18n, orm: ORM, bot: Bot,state:FSMContext):
     await message.answer(i18n.gettext("Ваш запрос на консультацию получен!", locale=user.lang))
     await message.delete()
@@ -106,9 +105,7 @@ async def handle_get_consultation(message: Message, user: User, i18n: I18n, orm:
         i18n.gettext("Вы можете вернуться на главную", locale=user.lang),
         reply_markup=Keyboards.back_to_home(i18n, user)
     )
-
     admins = await orm.user_repo.get_admins()
-    
     if admins:
         for admin in admins:
             message_text = i18n.gettext(
@@ -118,10 +115,30 @@ async def handle_get_consultation(message: Message, user: User, i18n: I18n, orm:
         if user.username:
             message_text += f"\n\nНаписать в Telegram: [t.me/{user.username}](https://t.me/{user.username})"
         await bot.send_message(chat_id=admin.user_id, text=message_text, parse_mode="Markdown")
-    await state.finish()
 
-@router.message(F.text == ("Disc guide") + " 📚")
+@router.message(F.text == ("Disc directory") + " 📚")
 @router.message(F.text == ("Справочник дисков") + " 📚")
+async def send_disk_guide(message: Message):
+    keyboard = get_inline_button()
+    await message.answer(
+        "Нажмите кнопку ниже, чтобы начать поиск дисков:",
+        reply_markup=keyboard,
+    )
+    
+
+def get_inline_button():
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Искать диск 🔍",
+                    switch_inline_query_current_chat="disk ",
+                )
+            ]
+        ]
+    )
+    return keyboard
+
 @router.inline_query(F.query.startswith('disk '))
 async def find_disk(inq: InlineQuery):
     query = inq.query[5:]
@@ -159,20 +176,15 @@ async def find_command(message: Message, user: User, orm: ORM, i18n: I18n):
     else:
         await message.answer(i18n.gettext("К сожалению данные по {} не найдены", locale=user.lang).format(model_name))
 
+@router.message(F.text == "Admin panel ⚙️")
+@router.message(F.text == "Админ панель ⚙️")
+async def open_admin_panel(message: Message, user: User, i18n: I18n):
+    if user.role == 'admin':
+        admin_keyboard = Keyboards.admin_panel(i18n, user)
+        await message.answer(i18n.gettext("Добро пожаловать в админ панель!", locale=user.lang), reply_markup=admin_keyboard)
+    else:
+        await message.answer(i18n.gettext("У вас нет доступа к админ панели.", locale=user.lang))
 
-
-@router.message(F.text == "alfinkly")
-async def info(message: Message, user, i18n: I18n):
-    await message.answer(i18n.gettext("Мой создатель... жив?", locale=user.lang))
-
-
-@router.message(F.text == "dokuzu")
-async def info(message: Message, user, i18n: I18n):
-    await message.answer(i18n.gettext("Это мой хозяин!!!!", locale=user.lang))
-
-@router.message(F.text == "onyoka")
-async def info(message: Message, user, i18n: I18n):
-    await message.answer(i18n.gettext("К Вашим услугам!!!!", locale=user.lang))
 
 @router.callback_query(F.data == "nothing")
 async def nothing(callback: CallbackQuery):

@@ -25,7 +25,7 @@ msgid "Наш канал 👥"
 msgstr "Our channel 👥"
 
 msgid "Справочник дисков 📚"
-msgstr "Disc guide 📚"
+msgstr "Disc directory 📚"
 
 msgid "Инструкция 📕"
 msgstr "Instruction 📕"
@@ -36,6 +36,32 @@ msgstr "Change language 🏳️"
 msgid "Получить консультацию 📧"
 msgstr "Request consultation 📧"
 
+msgid "Админ панель ⚙️"
+msgstr "Admin panel ⚙️"
+
+msgid "Язык изменен"
+msgstr "Language changed"
+
+msgid "Выберите язык:"
+msgstr "Select a language:"
+
+msgid "Получить консультацию 📧"
+msgstr "Get a consultation 📧"
+
+msgid "Искать диск 🔍"
+msgstr "Search for disk 🔍"
+
+msgid "Нажмите кнопку ниже, чтобы начать поиск дисков:"
+msgstr "Press the button below to start searching for disks:"
+
+msgid "К сожалению данные по {} не найдены"
+msgstr "Unfortunately, data for {} was not found"
+
+msgid "Добро пожаловать в админ панель!"
+msgstr "Welcome to the admin panel!"
+
+msgid "У вас нет доступа к админ панели."
+msgstr "You do not have access to the admin panel."
 
 
 msgid "Язык успешно изменен. Возвращаю вас на главный экран:"

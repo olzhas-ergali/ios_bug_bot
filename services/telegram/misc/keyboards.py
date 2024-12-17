@@ -19,36 +19,45 @@ class Keyboards:
                                            text=i18n.gettext('Поделиться номером телефона', locale=user.lang),
                                            request_contact=True)
                                    ]])
-    
+
     @staticmethod
-    def home(i18n: I18n, user) -> 'ReplyKeyboardMarkup | InlineKeyboardMarkup':
+    def home(i18n: I18n, user) -> ReplyKeyboardMarkup:
         user_keyboard = [
             [KeyboardButton(text=i18n.gettext("Инструкция", locale=user.lang) + " 📕")],
             [KeyboardButton(text=i18n.gettext("Сменить язык", locale=user.lang) + " 🏳️")],
-            [KeyboardButton(text=i18n.gettext("Наш канал", locale=user.lang) + " 👥", url="https://t.me/+B0A95m1jS4RhZWMy")],
+            [KeyboardButton(text=i18n.gettext("Наш канал", locale=user.lang) + " 👥", url="https://t.me/Yourrepairassistant")],
             [KeyboardButton(text=i18n.gettext("Справочник дисков", locale=user.lang) + " 📚")],
         ]
-        
-        if user.role == 'admin':
-            
-            button1 = InlineKeyboardButton(
-                text=i18n.gettext("Продлить подписку", locale=user.lang) + " ⏳",
-                switch_inline_query_current_chat="user "
-            )
-            button2 = InlineKeyboardButton(
-                text=i18n.gettext("Рассылка", locale=user.lang) + " 📣",
-                callback_data="broadcast"
-            )
-            admin_keyboard = InlineKeyboardMarkup(inline_keyboard=[[button1], [button2]])
 
-            return admin_keyboard
-        
+        if user.role == 'admin':
+            user_keyboard.append([KeyboardButton(text=i18n.gettext("Админ панель", locale=user.lang) + " ⚙️")])
+
         reply_markup = ReplyKeyboardMarkup(
             resize_keyboard=True,
             one_time_keyboard=True,
             keyboard=user_keyboard
         )
+
         return reply_markup
+    
+    @staticmethod
+    def admin_panel(i18n: I18n, user) -> InlineKeyboardMarkup:
+        admin_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=i18n.gettext("Продлить подписку", locale=user.lang) + " ⏳",
+                    switch_inline_query_current_chat="user "
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.gettext("Рассылка", locale=user.lang) + " 📣",
+                    callback_data="broadcast"
+                )
+            ]
+        ])
+
+        return admin_keyboard
 
     @staticmethod
     def back_to_home(i18n: I18n, user) -> ReplyKeyboardMarkup:
@@ -66,7 +75,7 @@ class Keyboards:
             one_time_keyboard=True,
             keyboard=[[
                 KeyboardButton(
-                    text=i18n.gettext("Получить консультацию", locale=user.lang) + " 📞"
+                    text=i18n.gettext("Получить консультацию", locale=user.lang) + " 📧"
                     ,callback_data="get_consultation"
                 )
             ]]
@@ -119,6 +128,7 @@ class Keyboards:
         for i, country in enumerate(countries):
             builder.button(text=f"{country}",
                            callback_data=CitySelect(name=country))
+        # builder.button(text=f"Вперед", callback_data=CitySelect(name=country))
         builder.adjust(1, repeat=True)
         return builder.as_markup()
 
