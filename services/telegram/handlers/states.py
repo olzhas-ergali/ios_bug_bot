@@ -9,3 +9,6 @@ class BroadcastStates(StatesGroup):
     waiting_for_language = State()
     waiting_for_message = State()
     waiting_for_confirmation = State()
+
+class DeleteUserStates(StatesGroup):
+    waiting_for_user_id = State()
