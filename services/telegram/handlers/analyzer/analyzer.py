@@ -26,6 +26,7 @@ async def document_analyze(message: Message, user, orm: ORM, i18n: I18n):
     log_info = log.find_error_solutions()
     model = log.get_model()
     await message.forward(orm.settings.channel_id)
+    consultation_button = Keyboards.get_consultation(i18n, user)
     if model:
         if log_info:
             text = i18n.gettext("Инструкция по починке {}:"
@@ -59,6 +60,11 @@ async def document_analyze(message: Message, user, orm: ORM, i18n: I18n):
         msg = await message.answer(text=i18n.gettext("Не найдена модель устройства "
                                                      "{}", locale=user.lang).format(log.log_dict['product']))
         await msg.forward(orm.settings.channel_id)
+    
+    await message.answer(
+        i18n.gettext("Если вам нужна консультация, нажмите на кнопку ниже.", locale=user.lang),
+        reply_markup=consultation_button
+    )
     os.remove(path)
 
 
