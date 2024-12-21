@@ -4,9 +4,9 @@ from aiogram.utils.i18n import I18n
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from database.database import ORM
-from services.telegram.misc.callbacks import  CitySelect, \
-    AdminCallback, CountrySelect,  RenewSubscription, ChooseModelCallback, \
-    FullButtonCallback,LangCallback,LangChangeCallBack, BroadcastLangCallback, BroadcastCallback
+from services.telegram.misc.callbacks import  \
+    AdminCallback, RenewSubscription, ChooseModelCallback, \
+    FullButtonCallback,LangCallback,LangChangeCallBack, BroadcastLangCallback, BroadcastCallback, UserListPagination
 
 class Keyboards:
 
@@ -54,10 +54,59 @@ class Keyboards:
                     text=i18n.gettext("Рассылка", locale=user.lang) + " 📣",
                     callback_data="broadcast"
                 )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=i18n.gettext("Список пользователей", locale=user.lang) + " 👥",
+                    callback_data="users_list"
+                )
             ]
         ])
-
         return admin_keyboard
+
+    @staticmethod
+    def get_users_list_keyboard(total_pages: int, current_page: int, i18n: I18n, user) -> InlineKeyboardMarkup:
+        buttons = []
+
+        nav_buttons = []
+        if current_page > 0:
+            nav_buttons.append(
+                InlineKeyboardButton(
+                    text="◀️",
+                    callback_data=UserListPagination(page=current_page - 1).pack()
+                )
+            )
+
+        nav_buttons.append(
+            InlineKeyboardButton(
+                text=f"{current_page + 1}/{total_pages}",
+                callback_data="nothing"
+            )
+        )
+
+        if current_page < total_pages - 1:
+            nav_buttons.append(
+                InlineKeyboardButton(
+                    text="▶️",
+                    callback_data=UserListPagination(page=current_page + 1).pack()
+                )
+            )
+
+        buttons.append(nav_buttons)
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=i18n.gettext("Удалить пользователя по ID", locale=user.lang),
+                callback_data="delete_user_by_id"
+            ),
+            InlineKeyboardButton(
+                text=i18n.gettext("Назад в админ панель", locale=user.lang) + " ↩️",
+                callback_data="back_to_admin"
+            )
+        ])
+
+        return InlineKeyboardMarkup(inline_keyboard=buttons)
+    
 
     @staticmethod
     def back_to_home(i18n: I18n, user) -> ReplyKeyboardMarkup:
@@ -69,17 +118,18 @@ class Keyboards:
                                    ]])
 
     @staticmethod
-    def get_consultation(i18n: I18n, user) -> ReplyKeyboardMarkup:
-        return ReplyKeyboardMarkup(
-            resize_keyboard=True,
-            one_time_keyboard=True,
-            keyboard=[[
-                KeyboardButton(
-                    text=i18n.gettext("Получить консультацию", locale=user.lang) + " 📧"
-                    ,callback_data="get_consultation"
-                )
-            ]]
+    def get_consultation(i18n: I18n, user) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=i18n.gettext("Получить консультацию", locale=user.lang) + " 📧",
+                        callback_data="get_consultation"
+                    )
+                ]
+            ]
         )
+
     
     @staticmethod
     def lang(is_menu=False):
@@ -112,25 +162,6 @@ class Keyboards:
             builder.button(text=i18n.gettext("Материал {} 📎", locale=user.lang).format(i), url=link)
         builder.adjust(1, repeat=True)
         return builder
-
-    @staticmethod
-    def countries(countries: dict):
-        builder = InlineKeyboardBuilder()
-        for i, country in enumerate(countries):
-            builder.button(text=f"{country}",
-                           callback_data=CountrySelect(name=country))
-        builder.adjust(1, repeat=True)
-        return builder.as_markup()
-
-    @staticmethod
-    def cities(countries: list):
-        builder = InlineKeyboardBuilder()
-        for i, country in enumerate(countries):
-            builder.button(text=f"{country}",
-                           callback_data=CitySelect(name=country))
-        # builder.button(text=f"Вперед", callback_data=CitySelect(name=country))
-        builder.adjust(1, repeat=True)
-        return builder.as_markup()
 
     @staticmethod
     def empty():
