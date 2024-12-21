@@ -12,7 +12,11 @@ from openpyxl.utils import get_column_letter
 class LogAnalyzer:
     def __init__(self, lang, path=None, username=None, tesseract_path=None):
         workbook: Workbook = openpyxl.load_workbook("./data/panic_codes.xlsx")
-        self.sheet = workbook[lang]
+        if lang not in workbook.sheetnames:
+            print(f"Warning: Worksheet '{lang}' does not exist. Skipping sheet loading.")
+            self.sheet = None 
+        else:
+            self.sheet = workbook[lang]
         if path is not None:
             self.log = self._read_log_file(path) if tesseract_path is None else self._read_photo(path, tesseract_path)
             self.log_dict = self.get_jsons(self.log) if tesseract_path is None else {}
