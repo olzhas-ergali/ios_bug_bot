@@ -13,6 +13,9 @@ class UserRepo(Repo):
             query = select(User)
             result = await session.scalars(query)
             return result.all() or []
+        
+    async def get_all_users(self) -> list[User]:
+            return await self.find_all()
 
     async def find_user_by_user_id(self, user_id) -> User:
         async with self.sessionmaker() as session:
@@ -75,6 +78,10 @@ class UserRepo(Repo):
             await session.commit()
             return user
         
+    async def delete(self, user: User):
+        async with self.sessionmaker() as session:
+            await session.delete(user)
+            await session.commit()
 
     async def get_admins(self) -> list[User]:
         async with self.sessionmaker() as session:

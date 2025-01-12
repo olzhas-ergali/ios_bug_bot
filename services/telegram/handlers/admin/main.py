@@ -73,7 +73,6 @@ async def renew_user_subscription(callback: CallbackQuery, callback_data: RenewS
     await callback.bot.send_message(callback_data.user_id, i18n.gettext("Вам продлили подписку \nСрок ее окончания: \n{}", locale=user.lang).format(sub.date_end),
                                     reply_markup=Keyboards.back_to_home(i18n, user))
 
-
 @router.callback_query(F.data == "broadcast")
 async def handle_broadcast(callback: CallbackQuery, state: FSMContext, i18n: I18n, user: User):
     if user.role != 'admin':
@@ -82,10 +81,9 @@ async def handle_broadcast(callback: CallbackQuery, state: FSMContext, i18n: I18
 
     await callback.message.answer(
         i18n.gettext("Выберите язык рассылки:", locale=user.lang),
-        reply_markup=Keyboards.lang2()  
+        reply_markup=Keyboards.lang2()
     )
     await state.set_state(BroadcastStates.waiting_for_language)
-
 
 @router.callback_query(BroadcastLangCallback.filter(), BroadcastStates.waiting_for_language)
 async def select_broadcast_language(callback: CallbackQuery,
@@ -93,6 +91,10 @@ async def select_broadcast_language(callback: CallbackQuery,
                                    state: FSMContext,
                                    i18n: I18n,
                                    user: User):
+    if user.role != 'admin':
+        await callback.answer(i18n.gettext("У вас нет доступа к этой функции", locale=user.lang))
+        return
+
     selected_lang = callback_data.lang
     await state.update_data(broadcast_language=selected_lang)
 
@@ -104,8 +106,7 @@ async def select_broadcast_language(callback: CallbackQuery,
     await callback.message.answer(prompt.get(selected_lang, "Enter your message:"))
     await state.set_state(BroadcastStates.waiting_for_message)
 
-
-@router.message(BroadcastStates.waiting_for_message)
+@router.message(BroadcastStates.waiting_for_message,F.text)
 async def confirm_broadcast_message(message: Message,
                                    state: FSMContext,
                                    user: User,
@@ -122,13 +123,11 @@ async def confirm_broadcast_message(message: Message,
 
     await message.answer(
         i18n.gettext("Предварительный просмотр сообщения:\n\n{}\n\nПодтвердить рассылку?", locale=user.lang).format(message.text),
-        reply_markup=builder 
+        reply_markup=builder
     )
-    await state.set_state(BroadcastStates.waiting_for_confirmation)
+    await state.set_state(BroadcastStates.confirming_message)
 
-
-
-@router.callback_query(BroadcastCallback.filter(F.action == "accept"))
+@router.callback_query(BroadcastCallback.filter(F.action == "accept"), BroadcastStates.confirming_message)
 async def perform_broadcast(callback: CallbackQuery,
                             callback_data: BroadcastCallback,
                             state: FSMContext,
@@ -140,7 +139,7 @@ async def perform_broadcast(callback: CallbackQuery,
 
     if not broadcast_language or not broadcast_message:
         await callback.message.answer(i18n.gettext("Ошибка: Не удалось получить данные для рассылки", locale=callback.from_user.lang))
-        await state.clear()  
+        await state.clear() 
         return
 
     users = await orm.user_repo.get_users_by_language(broadcast_language)
@@ -162,10 +161,9 @@ async def perform_broadcast(callback: CallbackQuery,
         f"Не удалось отправить: {failed_sends}"
     )
 
-    await state.clear() 
+    await state.clear()
 
-
-@router.callback_query(BroadcastCallback.filter(F.action == "cancel"))
+@router.callback_query(BroadcastCallback.filter(F.action == "cancel"), BroadcastStates.confirming_message)
 async def cancel_broadcast(callback: CallbackQuery,
                            callback_data: BroadcastCallback,
                            state: FSMContext,
@@ -174,4 +172,4 @@ async def cancel_broadcast(callback: CallbackQuery,
     await callback.message.answer(
         i18n.gettext("Рассылка отменена", locale=user.lang)
     )
-    await state.clear() 
+    await state.clear()
