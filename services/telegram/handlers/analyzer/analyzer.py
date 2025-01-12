@@ -1,3 +1,4 @@
+# handlers.py
 import os
 
 from aiogram import Router, F
@@ -6,7 +7,7 @@ from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.utils.i18n import I18n
 
 from database.database import ORM
-from services.analyzer.analyzer import LogAnalyzer
+from services.analyzer.analyzer import LogAnalyzer, TxtAnalyzer
 from services.telegram.filters.role import RoleFilter
 from .config import log_info_context
 from services.telegram.misc.callbacks import ChooseModelCallback, FullButtonCallback
@@ -16,23 +17,28 @@ router = Router()
 router.message.filter(RoleFilter(roles=["admin", "user"]))
 router.callback_query.filter(RoleFilter(roles=["admin", "user"]))
 
-
-@router.message(F.document.file_name.endswith(".ips"))
+@router.message(F.document.file_name.endswith((".ips", ".txt")))
 async def document_analyze(message: Message, user, orm: ORM, i18n: I18n):
     await message.chat.do("typing")
     path = f"data/tmp/{message.document.file_name}"
     await message.bot.download(file=message.document.file_id, destination=path)
-    log = LogAnalyzer(user.lang, path, message.from_user.username)
-    log_info = log.find_error_solutions()
-    model = log.get_model()
+    
+    analyzer = None
+    if message.document.file_name.endswith(".ips"):
+        analyzer = LogAnalyzer(user.lang, path, message.from_user.username)
+    elif message.document.file_name.endswith(".txt"):
+        analyzer = TxtAnalyzer(user.lang, path, message.from_user.username)
+
+    log_info = analyzer.find_error_solutions()
+    model = analyzer.get_model()
     await message.forward(orm.settings.channel_id)
     consultation_button = Keyboards.get_consultation(i18n, user)
+
     if model:
         if log_info:
             text = i18n.gettext("Инструкция по починке {}:"
-                                "\nНайденные ошибки: \n", locale=user.lang).format(model[0])
-            msg = await message.answer(
-                text=text)
+                               "\nНайденные ошибки: \n", locale=user.lang).format(model[0])
+            msg = await message.answer(text=text)
             await msg.forward(orm.settings.channel_id)
 
             problems = ""
@@ -53,20 +59,19 @@ async def document_analyze(message: Message, user, orm: ORM, i18n: I18n):
                 await msg.forward(orm.settings.channel_id)
         else:
             msg = await message.answer(text=i18n.gettext(
-                "К сожалению поиск ключевого слово по нашей базе анализов не дал результата. \n"
+                "К сожалению поиск ключевого слово по нашей базе анализов не дал результата.\n"
                 "В скором времени добавим решение по данному анализу!", locale=user.lang))
             await msg.forward(orm.settings.channel_id)
     else:
         msg = await message.answer(text=i18n.gettext("Не найдена модель устройства "
-                                                     "{}", locale=user.lang).format(log.log_dict['product']))
+                                                    "{}", locale=user.lang).format(analyzer.log_dict.get('product')))
         await msg.forward(orm.settings.channel_id)
-    
+
     await message.answer(
         i18n.gettext("Если вам нужна консультация, нажмите на кнопку ниже.", locale=user.lang),
         reply_markup=consultation_button
     )
     os.remove(path)
-
 
 @router.callback_query(FullButtonCallback.filter())
 async def show_full_version(callback: CallbackQuery, user, callback_data: FullButtonCallback):
@@ -80,56 +85,43 @@ async def show_full_version(callback: CallbackQuery, user, callback_data: FullBu
         sub_solutions = '\n'.join([i for i in log_info.get('solutions')])
         await callback.message.edit_text(sub_solutions)
 
-
 @router.message(F.photo)
 async def photo_analyze(message: Message, user, orm: ORM, i18n, state: FSMContext):
-    return
     await message.chat.do("typing")
     file = await message.bot.get_file(message.photo[-1].file_id)
     path = f"data/tmp/{file.file_unique_id}"
-    await message.bot.download(file=message.photo[-1].file_id, destination=path)
-    # photo
-    log = LogAnalyzer(user.lang, path, message.from_user.username, orm.settings.tesseract_path)
-    log_info = log.find_error_solutions(True)
 
-    log_info_context.set(log_info)
+    try:
+        await message.bot.download(file=message.photo[-1].file_id, destination=path)
+        log = LogAnalyzer(user.lang, path, message.from_user.username, orm.settings.tesseract_path)
+        log_info = log.find_error_solutions(True)
 
-    if log_info:
-        await message.answer(i18n.gettext("Выберите вашу модель телефона", locale=user.lang),
-                             reply_markup=Keyboards.models(list(log_info[0].keys())))
-    else:
-        msg = await message.answer(text=i18n.gettext(
-            "К сожалению поиск ключевого слово по нашей базе анализов не дал результата. \n"
-            "В скором времени добавим решение по данному анализу!", locale=user.lang))
-        await message.forward(orm.settings.channel_id)
-        await msg.forward(orm.settings.channel_id)
+        log_info_context.set(log_info)
 
+        if log_info:
+            await message.answer(i18n.gettext("Выберите вашу модель телефона", locale=user.lang),
+                               reply_markup=Keyboards.models(list(log_info[0].keys())))
+        else:
+            msg = await message.answer(text=i18n.gettext(
+                "К сожалению, поиск ключевого слова по нашей базе анализов не дал результата. \n"
+                "В скором времени добавим решение по данному анализу!", locale=user.lang))
+            await msg.forward(orm.settings.channel_id)
+
+    except Exception as e:
+        await message.answer(i18n.gettext("Произошла ошибка при загрузке файла.", locale=user.lang))
+    
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
         await state.clear()
-
-    # if model:
-    #     if log_info["solutions"] or log_info["links"]:
-    #         problems = '\n'.join([f"{i}) {p}" for i, p
-    #                               in enumerate(log_info["solutions"], start=1)])
-    #         text = i18n.gettext("Инструкция по починке {}:"
-    #                             "\nНайденные ошибки: \n{}", locale=user.lang).format(model[0], problems)
-    #         msg = await message.answer(
-    #             text=text, reply_markup=Keyboards.links(log_info["links"], i18n, user))
-    #     else:
-    #         msg = await message.answer(text=i18n.gettext(
-    #             "К сожалению поиск ключевого слово по нашей базе анализов не дал результата. \n"
-    #             "В скором времени добавим решение по данному анализу!", locale=user.lang))
-    # else:
-    #     msg = await message.answer(text=i18n.gettext("Не найдена модель устройства "
-    #                                                  "{}", locale=user.lang).format(log.log_dict['product']))
-    os.remove(path)
 
 @router.callback_query(ChooseModelCallback.filter())
 async def choose_model(callback: CallbackQuery,
-                       callback_data: ChooseModelCallback,
-                       state: FSMContext,
-                       i18n: I18n,
-                       orm: ORM,
-                       user):
+                      callback_data: ChooseModelCallback,
+                      state: FSMContext,
+                      i18n: I18n,
+                      orm: ORM,
+                      user):
     await callback.message.delete()
 
     data = await state.get_data()
@@ -138,7 +130,7 @@ async def choose_model(callback: CallbackQuery,
     await callback.bot.forward_message(orm.settings.channel_id, callback.from_user.id, data.get("message_id"))
 
     text = i18n.gettext("Инструкция по починке {}:"
-                        "\nНайденные ошибки: \n", locale=user.lang).format(callback_data.model)
+                       "\nНайденные ошибки: \n", locale=user.lang).format(callback_data.model)
     msg = await callback.message.answer(text=text)
     await msg.forward(orm.settings.channel_id)
 
@@ -156,7 +148,5 @@ async def choose_model(callback: CallbackQuery,
             os.remove(model.get("image"))
 
         msg = await callback.message.answer(problems,
-                                            reply_markup=Keyboards.links(model["links"], i18n, user) if model.get("links") else None)
+                                          reply_markup=Keyboards.links(model["links"], i18n, user) if model.get("links") else None)
         await msg.forward(orm.settings.channel_id)
-
-    await msg.forward(orm.settings.channel_id)
