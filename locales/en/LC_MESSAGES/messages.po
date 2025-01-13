@@ -18,6 +18,12 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.13.1\n"
 
+msgid "Введите страну"
+msgstr "Enter the country"
+
+msgid "Введите город"
+msgstr "Enter the city"
+
 msgid "Для регистрации поделитесь, пожалуйста, номером телефона, нажав на кнопку 'Поделиться номером телефона' ниже 👇"
 msgstr "To complete your registration, please share your phone number by pressing the 'Share phone number' button below 👇"
 
@@ -45,9 +51,6 @@ msgstr "Language changed"
 msgid "Выберите язык:"
 msgstr "Select a language:"
 
-msgid "Получить консультацию 📧"
-msgstr "Get a consultation 📧"
-
 msgid "Искать диск 🔍"
 msgstr "Search for disk 🔍"
 
@@ -62,7 +65,6 @@ msgstr "Welcome to the admin panel!"
 
 msgid "У вас нет доступа к админ панели."
 msgstr "You do not have access to the admin panel."
-
 
 msgid "Язык успешно изменен. Возвращаю вас на главный экран:"
 msgstr "Language successfully changed. Returning to the main screen:"
@@ -239,13 +241,6 @@ msgstr ""
 "\n"
 "Important: To obtain the most accurate information from the diagnostic file, send several of the latest panic files.\n"
 
-#: services/telegram/handlers/home/home.py:112
-msgid "К сожалению данные по {} не найдены"
-msgstr "Unfortunately, data for {} not found"
-
-#: services/telegram/handlers/home/home.py:117
-msgid "Мой создатель... жив?"
-msgstr "My creator... alive?"
 
 #: services/telegram/handlers/home/home.py:122
 msgid "Это мой хозяин!!!!"
