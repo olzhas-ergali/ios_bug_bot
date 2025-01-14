@@ -17,7 +17,7 @@ class BaseAnalyzer:
         self.username = username
         self.log = ""
         self.log_dict: Dict = {}
-        
+
         # Load Excel workbook
         workbook: Workbook = openpyxl.load_workbook("./data/panic_codes.xlsx")
         self.sheet = workbook[lang]
@@ -71,12 +71,11 @@ class BaseAnalyzer:
         return solutions, links
 
     def find_error_solutions(self, is_photo: bool = False, error: Optional[str] = None, 
-                           model: Optional[str] = None) -> List[Dict]:
+                             model: Optional[str] = None) -> List[Dict]:
         """Find error solutions based on log content."""
         results = []
         self.read_images()
         
-        # Find model column
         model_column = None
         for cell in self.sheet[2]:
             product = model if model is not None else self.log_dict.get("product")
@@ -103,7 +102,7 @@ class BaseAnalyzer:
             }
 
             error_code = str(row[0]).replace('"', '').replace('"', '')
-            
+
             if error is None and model is None:
                 if " mini" in error_code:
                     error_code = error_code[:error_code.find(" mini")]
@@ -123,13 +122,11 @@ class BaseAnalyzer:
             if not panic_string or not re.search(re.escape(error_code), panic_string):
                 continue
 
-            # Process solutions and links
             if row[model_column - 1]:
                 solutions, links = self.filter_cell(row[model_column - 1])
                 result["solutions"].extend(solutions)
                 result["links"].extend(links)
 
-            # Process images
             try:
                 cell = f'{get_column_letter(model_column - 1)}{index}'
                 image = self.get_image(cell)
@@ -154,7 +151,6 @@ class LogAnalyzer(BaseAnalyzer):
         try:
             with open(self.path, "r", encoding='utf-8') as file:
                 self.log = file.read()
-            # Parse JSON content after first line
             text = "".join(self.log.split("\n")[1:])
             self.log_dict = json.loads(text)
         except Exception as e:
@@ -162,42 +158,122 @@ class LogAnalyzer(BaseAnalyzer):
             self.log_dict = {}
 
 class TxtAnalyzer(BaseAnalyzer):
+    """Analyzer for TXT log files with comprehensive parsing capabilities."""
+
+    def __init__(self, lang: str, path: Optional[str] = None, username: Optional[str] = None):
+        super().__init__(lang, path, username)
+
+    def _normalize_json_content(self, content: str) -> str:
+        content = re.sub(r'\s*:\s*', ':', content)  # Remove spaces around colons
+        content = re.sub(r'\s*,\s*', ',', content)  # Remove spaces around commas
+        content = re.sub(r'\s+', '', content)  # Remove all spaces
+        return content
+
+    def _parse_json_content(self, content: str) -> Dict:
+        try:
+            normalized_content = self._normalize_json_content(content)
+            return json.loads(normalized_content)
+        except json.JSONDecodeError:
+            combined_data = {}
+            try:
+                if "}{" in content:
+                    parts = content.split("}{")
+                    first_part = parts[0] + "}"
+                    second_part = "{" + parts[1]
+                    combined_data.update(json.loads(self._normalize_json_content(first_part)))
+                    combined_data.update(json.loads(self._normalize_json_content(second_part)))
+                    return combined_data
+
+                lines = content.splitlines()
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(self._normalize_json_content(line))
+                        if isinstance(data, dict):
+                            combined_data.update(data)
+                    except json.JSONDecodeError:
+                        continue
+                return combined_data
+            except Exception:
+                return {}
+
+    def _extract_panic_info(self, content: str) -> Dict:
+        result = {}
+
+        panic_patterns = [
+            r'panic\(.*?\):\s*(.*?)(?:\n|$)',
+            r'panicString["\s:]+([^"\n]+)',
+            r'Panic\s+occurred["\s:]+([^"\n]+)',
+            r'error["\s:]+([^"\n]+)'
+        ]
+        for pattern in panic_patterns:
+            if match := re.search(pattern, content, re.IGNORECASE):
+                result['panicString'] = match.group(1).strip()
+                break
+
+        product_patterns = [
+            r'[Pp]roduct["\s:]+([^"\n]+)',
+            r'[Dd]evice["\s:]+([^"\n]+)',
+            r'[Mm]odel["\s:]+([^"\n]+)'
+        ]
+        for pattern in product_patterns:
+            if match := re.search(pattern, content, re.IGNORECASE):
+                result['product'] = match.group(1).strip()
+                break
+
+        return result
+
+    def _clean_content(self, content: str) -> str:
+        content = content.encode('utf-8').decode('utf-8-sig')
+        content = content.replace('\r\n', '\n').replace('\r', '\n')
+        content = content.replace('\x00', '').replace('\ufeff', '')
+        return content.strip()
+
     def load_and_parse_file(self) -> None:
         try:
-            with open(self.path, "r", encoding='utf-8') as file:
-                self.log = file.read()
-
-            lines = self.log.split('\n')
-            self.log_dict = {}
-
-            for line in lines:
+            # Attempt to read the file with different encodings
+            encodings = ['utf-8-sig', 'utf-8', 'latin1', 'cp1252']
+            content = None
+            
+            for encoding in encodings:
                 try:
-                    cleaned_line = line.replace(' ', '').replace('\\', '\\\\')
+                    with open(self.path, 'r', encoding=encoding) as file:
+                        content = file.read()
+                    break  # Exit the loop if reading is successful
+                except UnicodeDecodeError:
+                    continue  # Try the next encoding
 
-                    # Поиск ключей (например, "product") и значений
-                    if ':' in cleaned_line and '"' in cleaned_line:
-                        key, value = cleaned_line.split(':', 1)
+            if content is None:
+                raise ValueError("Could not decode file with any supported encoding")
 
-                        # Удаляем пробелы вокруг значений и извлекаем данные внутри кавычек
-                        value = value.strip().strip('"').rstrip(',')  # Убираем запятую, если она есть
-                        value = value.rstrip('"')  # Убираем кавычку, если она есть в конце
+            # Clean and log the content
+            content = self._clean_content(content)
+            self.log = content
 
-                        # Используем ключ как есть, включая кавычки
-                        if key.lower() == '"product"':
-                            self.log_dict['product'] = value  # Сохраняем продукт
-                        elif key.lower() == '"panicstring"':
-                            self.log_dict.setdefault('panicString', []).append(value)
-                except Exception as e:
-                    print(f"Warning: Error processing line: {e}")
-                    continue
+            # Attempt to parse JSON content
+            json_data = self._parse_json_content(content)
 
-            # Объединение panicString, если найдено
-            if 'panicString' in self.log_dict:
-                self.log_dict['panicString'] = ' '.join(self.log_dict['panicString'])
+            # Fallback to extracting panic information if JSON parsing fails
+            if not json_data:
+                json_data = self._extract_panic_info(content)
 
-            # Отладочный вывод
-            print(f"Found product: {self.log_dict.get('product')}")
+            # Handle potential missing keys in json_data
+            if not json_data.get('panicString') and not json_data.get('product'):
+                fallback_data = self._extract_panic_info(content)
+                json_data.update(fallback_data)
+
+            # Set the log dictionary with extracted data
+            self.log_dict = json_data
+
+            # Log the results
+            if self.log_dict:
+                print("Successfully parsed file content")
+                print(json.dumps(self.log_dict, indent=2, ensure_ascii=False))
+            else:
+                print("Warning: No data could be extracted from the file")
 
         except Exception as e:
-            print(f"Error parsing TXT file: {e}")
+            print(f"Error parsing file: {e}")
             self.log_dict = {}

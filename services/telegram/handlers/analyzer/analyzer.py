@@ -1,4 +1,3 @@
-# handlers.py
 import os
 
 from aiogram import Router, F
