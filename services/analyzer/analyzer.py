@@ -11,14 +11,12 @@ from openpyxl.utils import get_column_letter
 
 class BaseAnalyzer:
     def __init__(self, lang: str, path: Optional[str] = None, username: Optional[str] = None):
-        """Initialize base analyzer with common attributes."""
         self.lang = lang
         self.path = path
         self.username = username
         self.log = ""
         self.log_dict: Dict = {}
 
-        # Load Excel workbook
         workbook: Workbook = openpyxl.load_workbook("./data/panic_codes.xlsx")
         self.sheet = workbook[lang]
         self._images = {}
@@ -27,11 +25,9 @@ class BaseAnalyzer:
             self.load_and_parse_file()
 
     def load_and_parse_file(self) -> None:
-        """Load and parse the input file."""
         raise NotImplementedError
 
     def read_images(self) -> None:
-        """Read images from Excel sheet."""
         sheet_images = self.sheet._images
         for image in sheet_images:
             row = image.anchor._from.row + 1
@@ -39,14 +35,12 @@ class BaseAnalyzer:
             self._images[f'{col}{row}'] = image._data
 
     def get_image(self, cell: str) -> Image.Image:
-        """Get image from cell."""
         if cell not in self._images:
             raise ValueError(f"Cell {cell} doesn't contain an image")
         image = io.BytesIO(self._images[cell]())
         return Image.open(image)
 
     def get_model(self) -> Optional[List[str]]:
-        """Get device model information."""
         if not self.log_dict.get("product"):
             return None
 
@@ -59,7 +53,6 @@ class BaseAnalyzer:
 
     @staticmethod
     def filter_cell(text: str) -> Tuple[List[str], List[str]]:
-        """Filter cell content into solutions and links."""
         solutions = []
         links = []
         if text:
@@ -72,7 +65,6 @@ class BaseAnalyzer:
 
     def find_error_solutions(self, is_photo: bool = False, error: Optional[str] = None, 
                              model: Optional[str] = None) -> List[Dict]:
-        """Find error solutions based on log content."""
         results = []
         self.read_images()
         
@@ -127,27 +119,22 @@ class BaseAnalyzer:
                 result["solutions"].extend(solutions)
                 result["links"].extend(links)
 
-            try:
-                cell = f'{get_column_letter(model_column - 1)}{index}'
-                image = self.get_image(cell)
-                path = f'./{self.username}{cell}.png'
-                image.save(path)
-                result["image"] = path
-            except Exception as ex:
-                print(f"Image processing error: {ex}")
-
-            if error is not None:
-                return result
-
-            if result["solutions"] or result["links"]:
-                results.append(result)
+                if solutions or links:
+                    try:
+                        cell = f'{get_column_letter(model_column - 1)}{index}'
+                        image = self.get_image(cell)
+                        path = f'./{self.username}{cell}.png'
+                        image.save(path)
+                        result["image"] = path
+                    except Exception as ex:
+                        print(f"Image processing error: {ex}")
+                    results.append(result)
+                    break 
 
         return results
 
 class LogAnalyzer(BaseAnalyzer):
-    """Analyzer for IPS log files."""
     def load_and_parse_file(self) -> None:
-        """Load and parse IPS log file."""
         try:
             with open(self.path, "r", encoding='utf-8') as file:
                 self.log = file.read()
@@ -158,15 +145,13 @@ class LogAnalyzer(BaseAnalyzer):
             self.log_dict = {}
 
 class TxtAnalyzer(BaseAnalyzer):
-    """Analyzer for TXT log files with comprehensive parsing capabilities."""
-
     def __init__(self, lang: str, path: Optional[str] = None, username: Optional[str] = None):
         super().__init__(lang, path, username)
 
     def _normalize_json_content(self, content: str) -> str:
-        content = re.sub(r'\s*:\s*', ':', content)  # Remove spaces around colons
-        content = re.sub(r'\s*,\s*', ',', content)  # Remove spaces around commas
-        content = re.sub(r'\s+', '', content)  # Remove all spaces
+        content = re.sub(r'\s*(\w+)\s*:', r'\1:', content)
+        content = re.sub(r'\s*([:,])\s*', r'\1', content)
+        content = re.sub(r'("\s+)|(\s+")', '"', content)
         return content
 
     def _parse_json_content(self, content: str) -> Dict:
@@ -229,11 +214,13 @@ class TxtAnalyzer(BaseAnalyzer):
         content = content.encode('utf-8').decode('utf-8-sig')
         content = content.replace('\r\n', '\n').replace('\r', '\n')
         content = content.replace('\x00', '').replace('\ufeff', '')
+
+        content = re.sub(r'(?<=\w)\s(?=\w)', '', content) 
         return content.strip()
+
 
     def load_and_parse_file(self) -> None:
         try:
-            # Attempt to read the file with different encodings
             encodings = ['utf-8-sig', 'utf-8', 'latin1', 'cp1252']
             content = None
             
@@ -241,33 +228,27 @@ class TxtAnalyzer(BaseAnalyzer):
                 try:
                     with open(self.path, 'r', encoding=encoding) as file:
                         content = file.read()
-                    break  # Exit the loop if reading is successful
+                    break 
                 except UnicodeDecodeError:
-                    continue  # Try the next encoding
+                    continue 
 
             if content is None:
                 raise ValueError("Could not decode file with any supported encoding")
 
-            # Clean and log the content
             content = self._clean_content(content)
             self.log = content
 
-            # Attempt to parse JSON content
             json_data = self._parse_json_content(content)
 
-            # Fallback to extracting panic information if JSON parsing fails
             if not json_data:
                 json_data = self._extract_panic_info(content)
 
-            # Handle potential missing keys in json_data
             if not json_data.get('panicString') and not json_data.get('product'):
                 fallback_data = self._extract_panic_info(content)
                 json_data.update(fallback_data)
 
-            # Set the log dictionary with extracted data
             self.log_dict = json_data
 
-            # Log the results
             if self.log_dict:
                 print("Successfully parsed file content")
                 print(json.dumps(self.log_dict, indent=2, ensure_ascii=False))
