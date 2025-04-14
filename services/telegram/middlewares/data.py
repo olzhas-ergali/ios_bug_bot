@@ -10,9 +10,10 @@ from services.telegram.handlers.registration import ask_contact
 
 
 class DataMiddleware(BaseMiddleware):
-    def __init__(self, orm: ORM, scheduler: AsyncIOScheduler):
+    def __init__(self, orm: ORM, scheduler: AsyncIOScheduler, i18n ):
         self.orm = orm
         self.scheduler = scheduler
+        self.i18n = i18n
 
     async def __call__(
             self,
@@ -24,9 +25,16 @@ class DataMiddleware(BaseMiddleware):
         data["env"] = Environ()
         data["orm"] = self.orm
         data["scheduler"] = self.scheduler
-        user = await self.orm.user_repo.find_user_by_user_id(event.from_user.id)
-        if user:
-            data["user"] = user
-            return await handler(event, data)
-        else:
-            return await ask_contact(event)
+        data["i18n"] = self.i18n
+
+        if hasattr(event, "from_user") and event.from_user:
+            user = await self.orm.user_repo.find_user_by_user_id(event.from_user.id)
+            if user:
+                data["user"] = user
+                return await handler(event, data)
+            else:
+                return await ask_contact(event, data["state"], data["orm"], data["i18n"])
+    
+        return await handler(event, data)
+
+

@@ -4,14 +4,17 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from config import Environ
 from database.models import Base
 from database.repo.subscription import SubscriptionRepo
+from database.repo.transactions import TransactionRepo
 from database.repo.user import UserRepo
-
+from typing import Optional
 
 class ORM:
     def __init__(self):
         self.settings = Environ()
         self.user_repo: UserRepo = None
         self.subscription_repo: SubscriptionRepo = None
+        self.transactions: TransactionRepo = None 
+        self.async_sessionmaker: Optional[async_sessionmaker] = None
 
     async def get_async_engine(self, echo=False):
         async_engine = create_async_engine(
@@ -35,10 +38,22 @@ class ORM:
         engine.echo = True
 
     async def get_async_sessionmaker(self) -> async_sessionmaker:
-        return async_sessionmaker(await self.get_async_engine(),
-                                  expire_on_commit=False)
-
+        if not self.async_sessionmaker:
+            async_engine = await self.get_async_engine()
+            self.async_sessionmaker = async_sessionmaker(
+                async_engine, expire_on_commit=False
+            )
+        return self.async_sessionmaker
+    
     async def create_repos(self):
-        sessionmaker = await self.get_async_sessionmaker()
-        self.user_repo = UserRepo(sessionmaker)
-        self.subscription_repo = SubscriptionRepo(sessionmaker)
+        async_engine = await self.get_async_engine()
+        self.async_sessionmaker = async_sessionmaker(
+            async_engine, 
+            expire_on_commit=False,
+            autoflush=False
+        )
+        self.user_repo = UserRepo(self.async_sessionmaker)
+        self.subscription_repo = SubscriptionRepo(self.async_sessionmaker)
+        self.transactions = TransactionRepo(self.async_sessionmaker)
+
+

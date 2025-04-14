@@ -15,6 +15,21 @@ router = Router()
 @router.message(F.text, Command("start"))
 async def ask_contact(message: Message, state: FSMContext, orm: ORM, i18n: I18n):
     user = await orm.user_repo.find_user_by_user_id(message.from_user.id)
+    if not user:
+        user = await orm.user_repo.create_user(
+            user_id=message.from_user.id,
+            first_name=message.from_user.first_name or "",
+            last_name=message.from_user.last_name or "",
+            username=message.from_user.username or "",
+            phone_number=None,  # Ожидаем номер телефона
+            lang=None,  # Ожидаем выбор языка
+            fullname=None,  # Ожидаем ФИО
+            affiliate=None,  # Ожидаем место работы
+            country=None,  # Ожидаем страну
+            city=None,  # Ожидаем город
+            role="guest"
+        )
+    
     await state.update_data(columns=user.get_null_columns())
     msg = await message.answer(
         text='Для регистрации поделитесь, пожалуйста, номером телефона, нажав на кнопку "Поделиться номером телефона" ниже 👇\n\n'

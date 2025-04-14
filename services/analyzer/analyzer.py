@@ -1,260 +1,276 @@
 import io
 import json
 import re
-from typing import Dict, List, Tuple, Optional
-
+import logging
+import os
+import hashlib
 import openpyxl
-from openpyxl.workbook import Workbook
-from pytesseract import pytesseract
-from PIL import Image
+from chardet import detect
 from openpyxl.utils import get_column_letter
+from PIL import Image
+import pytesseract
 
-class BaseAnalyzer:
-    def __init__(self, lang: str, path: Optional[str] = None, username: Optional[str] = None):
-        self.lang = lang
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+def preprocess_log_content(text):
+    text = re.sub(r'<0x[0-9A-Fa-f]+>', '', text)
+    
+    json_candidates = re.findall(r'\{.*?\}', text, re.DOTALL)
+    if json_candidates:
+        return json_candidates[0]
+    
+    lines = text.split("\n")
+    structured_data = {}
+    for line in lines:
+        if ":" in line:
+            parts = line.split(":", 1)
+            key = parts[0].strip()
+            value = parts[1].strip()
+            structured_data[key] = value
+    
+    if structured_data:
+        try:
+            return json.dumps(structured_data)
+        except:
+            pass
+    
+    return text 
+
+def fix_json_structure(text):
+    if not text:
+        return {}
+        
+    if isinstance(text, dict):
+        return text
+        
+    if not isinstance(text, str):
+        try:
+            return json.loads(json.dumps(text))
+        except:
+            return {}
+    
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        try:
+            text = re.sub(r'\s+', ' ', text).strip()
+            text = re.sub(r'([{\[])\s*"', r'\1"', text)
+            text = re.sub(r':\s*"([^"]+)"\s*([,}])', r':"\1"\2', text)
+            text = re.sub(r',\s*}', '}', text)
+            return json.loads(text)
+        except:
+            try:
+                structured_data = {}
+                lines = text.splitlines()
+                for line in lines:
+                    if ":" in line:
+                        parts = line.split(":", 1)
+                        key = parts[0].strip()
+                        value = parts[1].strip()
+                        structured_data[key] = value
+                return structured_data if structured_data else {}
+            except:
+                return {"panicString": text}  # Сохраняем весь текст как panicString
+
+def clean_json_text(text):
+    if not isinstance(text, str):
+        return json.dumps(text) if hasattr(text, "__iter__") else "{}"
+    
+    text = re.sub(r'\s+', ' ', text)  
+    text = re.sub(r'"\s*([a-zA-Z0-9_]+)\s*"\s*:', r'"\1":', text)  
+    text = re.sub(r':\s*"([^"]+)"\s*', r': "\1"', text)  
+    text = text.replace('}{', '},{') 
+    
+    # Проверяем, является ли текст объектом или массивом
+    if text.startswith('{') and text.endswith('}'):
+        return text
+    elif not (text.startswith('[') and text.endswith(']')):
+        text = f'[{text}]'
+    
+    return text
+
+def parse_json_safely(text):
+    if isinstance(text, dict):
+        return text
+        
+    try:
+        cleaned_text = clean_json_text(text)
+        data = json.loads(cleaned_text)
+        if isinstance(data, list):
+            return data[0] if data else {}
+        return data
+    except json.JSONDecodeError as e:
+        logging.error(f"Ошибка JSON: {e}")
+        try:
+            structured_data = {}
+            lines = text.splitlines()
+            for line in lines:
+                if ":" in line:
+                    parts = line.split(":", 1)
+                    key = parts[0].strip()
+                    value = parts[1].strip()
+                    structured_data[key] = value
+            return structured_data if structured_data else {"panicString": text}
+        except:
+            return {"panicString": text}
+
+class LogAnalyzer:
+    def __init__(self, lang, path=None, username=None, tesseract_path=None):
+        try:
+            workbook = openpyxl.load_workbook("./data/panic_codes.xlsx")
+            self.sheet = workbook[lang]
+        except Exception as e:
+            logging.error(f"Ошибка загрузки таблицы кодов паники: {e}")
+            self.sheet = None
+            
         self.path = path
         self.username = username
         self.log = ""
-        self.log_dict: Dict = {}
+        self.log_dict = {}
 
-        workbook: Workbook = openpyxl.load_workbook("./data/panic_codes.xlsx")
-        self.sheet = workbook[lang]
-        self._images = {}
+        if path is not None:
+            self.log = self._process_file(path, tesseract_path)
+            if self.log:
+                json_candidate = preprocess_log_content(self.log)
+                if isinstance(json_candidate, dict):
+                    self.log_dict = json_candidate
+                else:
+                    self.log_dict = fix_json_structure(json_candidate)
+                
+                # Если log_dict пуст или не содержит panicString, используем весь текст как panicString
+                if not self.log_dict or not self.log_dict.get("panicString"):
+                    self.log_dict = self.log_dict or {}
+                    self.log_dict["panicString"] = self.log
 
-        if path:
-            self.load_and_parse_file()
-
-    def load_and_parse_file(self) -> None:
-        raise NotImplementedError
-
-    def read_images(self) -> None:
-        sheet_images = self.sheet._images
-        for image in sheet_images:
-            row = image.anchor._from.row + 1
-            col = get_column_letter(image.anchor._from.col)
-            self._images[f'{col}{row}'] = image._data
-
-    def get_image(self, cell: str) -> Image.Image:
-        if cell not in self._images:
-            raise ValueError(f"Cell {cell} doesn't contain an image")
-        image = io.BytesIO(self._images[cell]())
-        return Image.open(image)
-
-    def get_model(self) -> Optional[List[str]]:
-        if not self.log_dict.get("product"):
-            return None
-
-        product = self.log_dict["product"].lower().replace(" ", "")
-        for header_cell, model_cell in zip(self.sheet[1][1:], self.sheet[2][1:]):
-            if isinstance(model_cell.value, str):
-                if model_cell.value.lower().replace(" ", "") == product:
-                    return [header_cell.value, model_cell.value]
-        return None
+    def _process_file(self, path, tesseract_path):
+        """Определяет тип файла и обрабатывает его соответствующим образом."""
+        if not os.path.exists(path):
+            logging.error(f"Файл не найден: {path}")
+            return ""
+            
+        if path.endswith(('.ips', '.txt', '.json')):
+            return self._read_log_file(path)
+        elif path.endswith(('.png', '.jpg', '.jpeg')):
+            return self._read_photo(path, tesseract_path)
+        else:
+            logging.warning(f"Неподдерживаемый формат файла: {path}")
+            return ""
 
     @staticmethod
-    def filter_cell(text: str) -> Tuple[List[str], List[str]]:
-        solutions = []
-        links = []
-        if text:
-            for value in text.split(";"):
-                if (value := value.strip()).startswith("http"):
-                    links.append(value)
-                elif value:
-                    solutions.append(value)
-        return solutions, links
+    def _read_log_file(path):
+        """Читает файл с автоопределением кодировки"""
+        try:
+            with open(path, 'rb') as f:
+                raw_data = f.read()
+                encoding = detect(raw_data)['encoding'] or 'utf-8'
+            
+            try:
+                with open(path, 'r', encoding=encoding) as file:
+                    return file.read()
+            except UnicodeDecodeError:
+                # если не удалось декодировать с определенной кодировкой, пробуем UTF-8 с игнорированием ошибок
+                with open(path, 'r', encoding='utf-8', errors='ignore') as file:
+                    return file.read()
+        except Exception as e:
+            logging.error(f"Ошибка чтения файла {path}: {e}")
+            return ""
 
-    def find_error_solutions(self, is_photo: bool = False, error: Optional[str] = None, 
-                             model: Optional[str] = None) -> List[Dict]:
-        results = []
-        self.read_images()
+    @staticmethod
+    def _read_photo(path, tesseract_path):
+        try:
+            img = Image.open(path)
+            if tesseract_path:
+                pytesseract.tesseract_cmd = tesseract_path
+            return pytesseract.image_to_string(img, lang='eng')
+        except Exception as e:
+            logging.error(f"Ошибка обработки изображения {path}: {e}")
+            return ""
+
+    def extract_product_info(self):
+        try:
+            model = (
+                self.log_dict.get("product") or
+                self.log_dict.get("header", {}).get("product") or
+                self.log_dict.get("model") or
+                "Неизвестно"
+            )
+
+            crash_key = (
+                self.log_dict.get("crashReporterKey") or
+                hashlib.md5(self.log.encode()).hexdigest()
+            )
+
+            panic_string = self.log
+
+            return model.strip(), crash_key, panic_string
+        except Exception as e:
+            logging.error(f"extract_product_info: {e}", exc_info=True)
+            return "Неизвестно", None, self.log
+
+
+    def find_error_solutions(self):
+        if not self.sheet:
+            logging.warning("Таблица кодов отсутствует! Невозможно выполнить анализ.")
+            return [{"solutions": ["Невозможно найти решение - таблица кодов отсутствует."], "is_full": False}]
+            
+        if not self.log_dict:
+            logging.warning("log_dict пуст! Невозможно выполнить анализ.")
+            return [{"solutions": ["Невозможно найти решение - ошибка анализа файла."], "is_full": False}]
+
+        product = self.log_dict.get("product", "").lower().replace(" ", "")
+        panic_string = self.log_dict.get("panicString", "")
+
+        if not panic_string and self.log:
+            # ксли panicString не найден, используем весь лог
+            panic_string = self.log
+
+        if not panic_string:
+            logging.warning("Отсутствует поле `panicString`.")
+            return [{"solutions": ["Невозможно найти решение - в файле не найдена информация об ошибке."], "is_full": False}]
+
+        solutions = self._search_solutions_in_xlsx(product, panic_string)
         
+        # ксли не нашли по модели, попробуем поискать по common решениям
+        if not solutions and product != "common":
+            solutions = self._search_solutions_in_xlsx("common", panic_string)
+            
+        return solutions if solutions else [{"solutions": ["Решение не найдено. Рекомендуется обратиться в службу поддержки."], "is_full": False}]
+
+    def _search_solutions_in_xlsx(self, product, panic_string):
+        if not self.sheet:
+            return []
+            
+        # сначала ищем колонку для указанной модели
         model_column = None
-        for cell in self.sheet[2]:
-            product = model if model is not None else self.log_dict.get("product")
-            if product and isinstance(cell.value, str):
-                if cell.value.lower().replace(" ", "") == product.lower().replace(" ", ""):
+        for cell in self.sheet[2]:  # Предполагаем, что названия моделей во второй строке
+            if cell.value and isinstance(cell.value, str) and cell.value.lower().replace(" ", "") == product:
+                model_column = cell.column
+                break
+        
+        # если не нашли модель, ищем common решения
+        if model_column is None and product != "common":
+            for cell in self.sheet[2]:
+                if cell.value and isinstance(cell.value, str) and "common" in cell.value.lower():
                     model_column = cell.column
                     break
+        
+        if model_column is None:
+            return []
 
-        if not model_column:
-            return results
-
-        rows = self.sheet.iter_rows(min_row=1, max_col=model_column, values_only=True)
-        is_mini = False
-
-        for index, row in enumerate(rows, start=1):
-            if not row[0]:
-                continue
-
-            result = {
-                "solutions": [],
-                "links": [],
-                "is_full": True,
-                "error_code": None
-            }
-
-            error_code = str(row[0]).replace('"', '').replace('"', '')
-
-            if error is None and model is None:
-                if " mini" in error_code:
-                    error_code = error_code[:error_code.find(" mini")]
-                    result['is_full'] = False
-                    result['error_code'] = error_code
-
-                if is_mini:
-                    is_mini = False
-                    continue
-                elif not result['is_full']:
-                    is_mini = True
-
-                panic_string = self.log_dict.get("panicString", "")
-            else:
-                panic_string = error
-
-            if not panic_string or not re.search(re.escape(error_code), panic_string):
-                continue
-
-            if row[model_column - 1]:
-                solutions, links = self.filter_cell(row[model_column - 1])
-                result["solutions"].extend(solutions)
-                result["links"].extend(links)
-
-                if solutions or links:
-                    try:
-                        cell = f'{get_column_letter(model_column - 1)}{index}'
-                        image = self.get_image(cell)
-                        path = f'./{self.username}{cell}.png'
-                        image.save(path)
-                        result["image"] = path
-                    except Exception as ex:
-                        print(f"Image processing error: {ex}")
-                    results.append(result)
-                    break 
-
-        return results
-
-class LogAnalyzer(BaseAnalyzer):
-    def load_and_parse_file(self) -> None:
-        try:
-            with open(self.path, "r", encoding='utf-8') as file:
-                self.log = file.read()
-            text = "".join(self.log.split("\n")[1:])
-            self.log_dict = json.loads(text)
-        except Exception as e:
-            print(f"Error parsing IPS file: {e}")
-            self.log_dict = {}
-
-class TxtAnalyzer(BaseAnalyzer):
-    def __init__(self, lang: str, path: Optional[str] = None, username: Optional[str] = None):
-        super().__init__(lang, path, username)
-
-    def _normalize_json_content(self, content: str) -> str:
-        content = re.sub(r'\s*(\w+)\s*:', r'\1:', content)
-        content = re.sub(r'\s*([:,])\s*', r'\1', content)
-        content = re.sub(r'("\s+)|(\s+")', '"', content)
-        return content
-
-    def _parse_json_content(self, content: str) -> Dict:
-        try:
-            normalized_content = self._normalize_json_content(content)
-            return json.loads(normalized_content)
-        except json.JSONDecodeError:
-            combined_data = {}
-            try:
-                if "}{" in content:
-                    parts = content.split("}{")
-                    first_part = parts[0] + "}"
-                    second_part = "{" + parts[1]
-                    combined_data.update(json.loads(self._normalize_json_content(first_part)))
-                    combined_data.update(json.loads(self._normalize_json_content(second_part)))
-                    return combined_data
-
-                lines = content.splitlines()
-                for line in lines:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        data = json.loads(self._normalize_json_content(line))
-                        if isinstance(data, dict):
-                            combined_data.update(data)
-                    except json.JSONDecodeError:
-                        continue
-                return combined_data
-            except Exception:
-                return {}
-
-    def _extract_panic_info(self, content: str) -> Dict:
-        result = {}
-
-        panic_patterns = [
-            r'panic\(.*?\):\s*(.*?)(?:\n|$)',
-            r'panicString["\s:]+([^"\n]+)',
-            r'Panic\s+occurred["\s:]+([^"\n]+)',
-            r'error["\s:]+([^"\n]+)'
-        ]
-        for pattern in panic_patterns:
-            if match := re.search(pattern, content, re.IGNORECASE):
-                result['panicString'] = match.group(1).strip()
-                break
-
-        product_patterns = [
-            r'[Pp]roduct["\s:]+([^"\n]+)',
-            r'[Dd]evice["\s:]+([^"\n]+)',
-            r'[Mm]odel["\s:]+([^"\n]+)'
-        ]
-        for pattern in product_patterns:
-            if match := re.search(pattern, content, re.IGNORECASE):
-                result['product'] = match.group(1).strip()
-                break
-
-        return result
-
-    def _clean_content(self, content: str) -> str:
-        content = content.encode('utf-8').decode('utf-8-sig')
-        content = content.replace('\r\n', '\n').replace('\r', '\n')
-        content = content.replace('\x00', '').replace('\ufeff', '')
-
-        content = re.sub(r'(?<=\w)\s(?=\w)', '', content) 
-        return content.strip()
-
-
-    def load_and_parse_file(self) -> None:
-        try:
-            encodings = ['utf-8-sig', 'utf-8', 'latin1', 'cp1252']
-            content = None
+        solutions = []
+        # проходим по всем строкам и ищем соответствие кода ошибки
+        for row in range(3, self.sheet.max_row + 1):  # начинаем с 3-й строки, т.к. первые две - заголовки
+            error_code = self.sheet.cell(row=row, column=1).value
+            solution = self.sheet.cell(row=row, column=model_column).value
             
-            for encoding in encodings:
-                try:
-                    with open(self.path, 'r', encoding=encoding) as file:
-                        content = file.read()
-                    break 
-                except UnicodeDecodeError:
-                    continue 
-
-            if content is None:
-                raise ValueError("Could not decode file with any supported encoding")
-
-            content = self._clean_content(content)
-            self.log = content
-
-            json_data = self._parse_json_content(content)
-
-            if not json_data:
-                json_data = self._extract_panic_info(content)
-
-            if not json_data.get('panicString') and not json_data.get('product'):
-                fallback_data = self._extract_panic_info(content)
-                json_data.update(fallback_data)
-
-            self.log_dict = json_data
-
-            if self.log_dict:
-                print("Successfully parsed file content")
-                print(json.dumps(self.log_dict, indent=2, ensure_ascii=False))
-            else:
-                print("Warning: No data could be extracted from the file")
-
-        except Exception as e:
-            print(f"Error parsing file: {e}")
-            self.log_dict = {}
+            if not error_code or not solution:
+                continue
+                
+            error_code = str(error_code).replace('"', '')
+            if re.search(re.escape(error_code), panic_string, re.IGNORECASE):
+                if isinstance(solution, str):
+                    solutions.append({"solutions": [solution], "is_full": True})
+                else:
+                    solutions.append({"solutions": [str(solution)], "is_full": True})
+        
+        return solutions

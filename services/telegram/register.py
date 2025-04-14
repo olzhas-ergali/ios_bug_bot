@@ -31,9 +31,11 @@ class TgRegister:
     def _register_middlewares(self):
         scheduler = AsyncIOScheduler(timezone="Asia/Almaty")
         scheduler.start()
-        middleware = DataMiddleware(self.orm, scheduler)
         i18n_middleware = SimpleI18nMiddleware(self.i18n, "i18n", "i18n_middleware")
+        middleware = DataMiddleware(self.orm, scheduler, i18n_middleware.i18n)
 
+        self.dp.update.middleware(middleware)
+        self.dp.update.middleware(i18n_middleware)
         self.dp.callback_query.middleware(middleware)
         self.dp.callback_query.middleware(i18n_middleware)
         self.dp.message.middleware(middleware)

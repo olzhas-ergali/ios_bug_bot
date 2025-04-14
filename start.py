@@ -13,7 +13,6 @@ from services.telegram.misc.create_dirs import create_dirs
 from services.telegram.register import TgRegister
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-
 async def start(environment: Environ):
     parser = argparse.ArgumentParser(description="Пример скрипта с аргументом -r")
     parser.add_argument('-r', action='store_true', help='Флаг для выполнения некоторого кода')
