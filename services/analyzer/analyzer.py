@@ -4,18 +4,13 @@ import re
 import logging
 import os
 import hashlib
-import asyncio
 import openpyxl
-from openpyxl.utils import get_column_letter
 from chardet import detect
+from openpyxl.utils import get_column_letter
 from PIL import Image
 import pytesseract
-from services.telegram.ai.ai import analyze_file_with_ai
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
-# Константа для обозначения ненайденного решения (для совместимости с хендлером)
-SOLUTION_NOT_FOUND_DETAILED_KEY = "solution_not_found_detailed"
 
 def preprocess_log_content(text):
     text = re.sub(r'<0x[0-9A-Fa-f]+>', '', text)
@@ -124,9 +119,10 @@ class LogAnalyzer:
         self.panic_sheet = None
         self.nand_sheet = None
         
-        # --- Восстановлена загрузка Excel файлов --- 
+        # Загружаем panic_codes.xlsx
         try:
             panic_workbook = openpyxl.load_workbook("./data/panic_codes.xlsx")
+            # Пытаемся получить лист по языку, если нет - берем активный
             try:
                  self.panic_sheet = panic_workbook[lang]
                  logging.info(f"Загружен лист '{lang}' из panic_codes.xlsx")
@@ -137,9 +133,11 @@ class LogAnalyzer:
             logging.error("Файл ./data/panic_codes.xlsx не найден!")
         except Exception as e:
             logging.error(f"Ошибка загрузки panic_codes.xlsx: {e}")
-
+            
+        # Загружаем nand_list.xlsx
         try:
             nand_workbook = openpyxl.load_workbook("./data/nand_list.xlsx")
+            # Предполагаем ту же логику для листов (по языку или активный)
             try:
                  self.nand_sheet = nand_workbook[lang]
                  logging.info(f"Загружен лист '{lang}' из nand_list.xlsx")
@@ -150,11 +148,9 @@ class LogAnalyzer:
             logging.warning("Файл ./data/nand_list.xlsx не найден! Поиск по нему будет невозможен.")
         except Exception as e:
             logging.error(f"Ошибка загрузки nand_list.xlsx: {e}")
-        # --- Конец восстановления загрузки Excel --- 
             
         self.path = path
         self.username = username
-        self.lang = lang
         self.log = ""
         self.log_dict = {}
 
@@ -169,11 +165,13 @@ class LogAnalyzer:
                 
                 if not self.log_dict or not self.log_dict.get("panicString"):
                     self.log_dict = self.log_dict or {}
-                    _, _, extracted_panic = self.extract_product_info()
+                    # Пытаемся извлечь panicString при инициализации, чтобы он был доступен
+                    _, _, extracted_panic = self.extract_product_info() # Вызываем extract для заполнения
+                    # Не перезаписываем, если extract_product_info уже что-то нашел и записал
                     if "panicString" not in self.log_dict and extracted_panic:
                          self.log_dict["panicString"] = extracted_panic
-                    elif "panicString" not in self.log_dict:
-                    self.log_dict["panicString"] = self.log
+                    elif "panicString" not in self.log_dict: # Если и extract не нашел
+                         self.log_dict["panicString"] = self.log # Используем весь лог
 
     def _process_file(self, path, tesseract_path):
         """Определяет тип файла и обрабатывает его соответствующим образом."""
@@ -285,7 +283,7 @@ class LogAnalyzer:
                          logging.warning("Распарсенный panicstring не является словарем.")
                 except json.JSONDecodeError as e:
                     logging.warning(f"Не удалось распарсить очищенный panicstring как JSON: {e}. Строка (начало): {cleaned_panic_json_str[:200]}...")
-        except Exception as e:
+                except Exception as e:
                      logging.error(f"Непредвиденная ошибка при парсинге panicstring JSON: {e}")
 
             # Шаг 1.3: Fallback - ищем старым Regex в сыром тексте лога
@@ -353,112 +351,90 @@ class LogAnalyzer:
                  crash_key = hashlib.md5(b"error_key").hexdigest()
             return "неизвестно", crash_key, self.log or ""
 
-    async def find_error_solutions(self):
-        # 1. Проверка наличия данных
+    def find_error_solutions(self):
+        # Проверяем наличие хотя бы одного файла
         if not self.panic_sheet and not self.nand_sheet:
             logging.error("Оба файла Excel (panic_codes, nand_list) не загружены! Поиск невозможен.")
-            # Возвращаем ошибку отсутствия БД
             return [{"solutions": ["Невозможно найти решение - файлы базы знаний отсутствуют."], "is_full": False}]
             
         if not self.log_dict:
             logging.warning("log_dict пуст! Невозможно выполнить анализ.")
             return [{"solutions": ["Невозможно найти решение - ошибка анализа файла."], "is_full": False}]
 
-        # 2. Извлечение информации (product и panic_string)
         product, _, panic_string = self.extract_product_info()
-        product_cleaned = product.lower().strip().replace(" ", "") # Очищенное имя модели для поиска в Excel
-        original_product_name = product if product != "Неизвестно" else None # Исходное имя для ответа
+        product_cleaned = product.lower().strip().replace(" ", "")
+        original_product_name = product if product != "Неизвестно" else None 
 
         if not product_cleaned or product_cleaned == "неизвестно":
-             logging.warning(f"Не удалось извлечь 'product' для поиска в Excel...")
-             # Используем ключ, который обработчик поймет как "модель неизвестна"
-             return [{"solutions": [SOLUTION_NOT_FOUND_DETAILED_KEY], "model": ["Неизвестно"], "is_full": False}]
+             logging.warning(f"Не удалось извлечь 'product'...")
+             # Возвращаем структуру для нового сообщения об ошибке (модель неизвестна)
+             return [{"solutions": ["solution_not_found_detailed"], "model": ["Неизвестно"], "is_full": False}]
 
-        if not panic_string:
-            logging.warning("Отсутствует или пустой panicString.")
+        # Очищаем panic_string для поиска
+        cleaned_panic_string_for_search = panic_string
+        if panic_string and (re.search(r'\b[a-zA-Z] [a-zA-Z]\b', panic_string) or re.search(r'" : "', panic_string)):
+            logging.info("Обнаружены пробелы в panicString, применяем очистку перед поиском...")
+            original_length = len(panic_string)
+            cleaned_panic_string_for_search = re.sub(r'\s+(?=[^a-zA-Z0-9\s])|(?<=[^a-zA-Z0-9\s])\s+', '', panic_string)
+            cleaned_panic_string_for_search = re.sub(r'(?!\w)\s+(?=\w)|(?<=\w)\s+(?!\w)', '', cleaned_panic_string_for_search) 
+            cleaned_panic_string_for_search = ' '.join(cleaned_panic_string_for_search.split())
+            logging.info(f"Очищенный panicString для поиска (было {original_length}, стало {len(cleaned_panic_string_for_search)}): {cleaned_panic_string_for_search[:200]}...")
+        elif not panic_string:
+            logging.warning("Отсутствует или пустой panicString для поиска решения.")
             return [{"solutions": ["Невозможно найти решение - не удалось извлечь текст ошибки (panic string)."], "is_full": False}]
+        else:
+             logging.info("Пробелы в panicString не обнаружены или он пуст, очистка перед поиском не применялась.")
 
-        # 3. Получение ключевой строки ошибки от ИИ
-        search_string_from_ai = ""
-        try:
-            logging.info(f"Запрос к ИИ для извлечения ключевой ошибки из panic_string (длина: {len(panic_string)}), язык: {self.lang}")
-            ai_response = await analyze_file_with_ai(panic_string, language=self.lang)
-            logging.info(f"Получена строка от ИИ для поиска: '{ai_response}'")
-
-            if ai_response and not ai_response.startswith("Ошибка:") and not ai_response.startswith("Error:"):
-                search_string_from_ai = ai_response # Используем ответ ИИ как строку для поиска
-            else:
-                # Если ИИ вернул ошибку, логируем и пытаемся искать по исходному panic_string
-                logging.error(f"ИИ не смог извлечь ключевую строку, вернул ошибку: {ai_response}. Попытка поиска по полному panic_string.")
-                # Очищаем исходный panic_string для поиска (как делали раньше)
-                cleaned_panic_string_fallback = panic_string
-                if panic_string and (re.search(r'\b[a-zA-Z] [a-zA-Z]\b', panic_string) or re.search(r'" : "', panic_string)):
-                    cleaned_panic_string_fallback = re.sub(r'\s+(?=[^a-zA-Z0-9\s])|(?<=[^a-zA-Z0-9\s])\s+', '', panic_string)
-                    cleaned_panic_string_fallback = re.sub(r'(?!\w)\s+(?=\w)|(?<=\w)\s+(?!\w)', '', cleaned_panic_string_fallback)
-                    cleaned_panic_string_fallback = ' '.join(cleaned_panic_string_fallback.split())
-                search_string_from_ai = cleaned_panic_string_fallback
-
-        except Exception as e:
-            logging.error(f"Ошибка при вызове ИИ для извлечения ключевой строки: {e}. Попытка поиска по полному panic_string.", exc_info=True)
-            # Как fallback, используем очищенный panic_string
-            cleaned_panic_string_fallback = panic_string
-            if panic_string and (re.search(r'\b[a-zA-Z] [a-zA-Z]\b', panic_string) or re.search(r'" : "', panic_string)):
-                 cleaned_panic_string_fallback = re.sub(r'\s+(?=[^a-zA-Z0-9\s])|(?<=[^a-zA-Z0-9\s])\s+', '', panic_string)
-                 cleaned_panic_string_fallback = re.sub(r'(?!\w)\s+(?=\w)|(?<=\w)\s+(?!\w)', '', cleaned_panic_string_fallback)
-                 cleaned_panic_string_fallback = ' '.join(cleaned_panic_string_fallback.split())
-            search_string_from_ai = cleaned_panic_string_fallback
-
-        if not search_string_from_ai:
-             logging.warning("Строка для поиска в Excel пуста (ИИ не ответил, fallback тоже пуст). Поиск невозможен.")
-             # Возвращаем ключ "не найдено"
-             return [{"solutions": [SOLUTION_NOT_FOUND_DETAILED_KEY], "model": [original_product_name or "Неизвестно"], "is_full": False}]
-
-        # 4. Поиск полученной строки (или fallback) в Excel
-        logging.info(f"Поиск строки '{search_string_from_ai[:100]}...' в Excel для модели '{product_cleaned}'.")
+        # --- Поиск ВСЕХ совпадений во всех файлах --- 
         all_found_solutions = []
         if self.panic_sheet:
-             logging.info(f"Поиск в panic_codes.xlsx...")
-             panic_solutions = self._search_in_sheet(self.panic_sheet, product_cleaned, search_string_from_ai)
+             logging.info(f"Поиск ВСЕХ совпадений для '{product_cleaned}' в panic_codes.xlsx...")
+             panic_solutions = self._search_in_sheet(self.panic_sheet, product_cleaned, cleaned_panic_string_for_search)
              all_found_solutions.extend(panic_solutions)
-
+        
         if self.nand_sheet:
-             logging.info(f"Поиск в nand_list.xlsx...")
-             nand_solutions = self._search_in_sheet(self.nand_sheet, product_cleaned, search_string_from_ai)
+             # Ищем в nand_list только если в panic_codes ничего не нашли?
+             # Нет, давайте соберем из обоих и потом приоритезируем.
+             logging.info(f"Поиск ВСЕХ совпадений для '{product_cleaned}' в nand_list.xlsx...")
+             nand_solutions = self._search_in_sheet(self.nand_sheet, product_cleaned, cleaned_panic_string_for_search)
              all_found_solutions.extend(nand_solutions)
 
-        # 5. Выбор и возврат результата
         if not all_found_solutions:
-            logging.info(f"Решение не найдено в Excel для строки '{search_string_from_ai[:100]}...' и модели '{product_cleaned}'.")
-            return [{"solutions": [SOLUTION_NOT_FOUND_DETAILED_KEY], "model": [original_product_name or "Неизвестно"], "is_full": False}]
+            logging.info(f"Решение не найдено ни в одном файле Excel для модели '{product_cleaned}'.")
+            return [{"solutions": ["solution_not_found_detailed"], "model": [original_product_name or "Неизвестно"], "is_full": False}]
+        
+        logging.info(f"Найдено всего {len(all_found_solutions)} потенциальных совпадений. Выбор самого длинного/специфичного...")
+        
+        # --- НОВАЯ ЛОГИКА ВЫБОРА: по максимальной длине совпавшего кода --- 
+        final_solution = None
+        
+        if len(all_found_solutions) == 1:
+            # Если найдено только одно совпадение, берем его
+            final_solution = all_found_solutions[0]
+            logging.info(f"Найдено одно совпадение. Выбрано решение (код: '{final_solution.get('matched_code')}').")
+        else:
+            # Если найдено несколько, выбираем по самому длинному matched_code
+            final_solution = max(all_found_solutions, key=lambda sol: len(sol.get("matched_code", "")))
+            logging.info(f"Найдено несколько совпадений. Выбрано решение с самым длинным кодом: '{final_solution.get('matched_code')} ({len(final_solution.get('matched_code',''))} символов).")
 
-        logging.info(f"Найдено {len(all_found_solutions)} потенциальных совпадений в Excel. Выбираем лучшее.")
-
-        # --- Простая Приоритетизация: выбираем самое длинное совпадение кода --- 
-        # (Можно вернуть старую логику приоритезации по panic_core_message, если нужно)
-        final_solution = max(all_found_solutions, key=lambda sol: len(sol.get("matched_code", "")))
-        logging.info(f"Выбрано самое длинное совпадение из Excel (код: '{final_solution.get('matched_code')}').")
-
-        # Добавляем модель к финальному решению перед возвратом
-        final_solution["model"] = [original_product_name or "Неизвестно"]
+        # Возвращаем только одно выбранное решение в виде списка
         return [final_solution]
 
-    # --- Восстановлен метод _search_in_sheet --- 
-    def _search_in_sheet(self, sheet, product_key, search_string):
-        """Ищет ВСЕ совпадения ПОДСТРОКИ error_code из Excel в search_string."""
+    def _search_in_sheet(self, sheet, product_key, panic_string_cleaned):
+        """Ищет ВСЕ ТОЧНЫЕ совпадения (границы слова) для product_key в ОЧИЩЕННОМ panic_string."""
         if not sheet:
             return []
-        if not search_string:
+        if not panic_string_cleaned:
              return []
         if not product_key or product_key == "неизвестно":
             return []
             
         model_column_index = None
         try:
-            header_row = sheet[2]
+            header_row = sheet[2] 
         except IndexError:
-             logging.warning(f"Не удалось прочитать строку заголовков (индекс 2) в листе '{sheet.title}'")
              return []
-
+             
         available_platforms = []
         for cell in header_row:
             if cell.value:
@@ -466,47 +442,50 @@ class LogAnalyzer:
                 available_platforms.append(platform_id)
                 if platform_id == product_key:
                     model_column_index = cell.column
-                    logging.info(f"Найден столбец для модели '{product_key}' (столбец {get_column_letter(model_column_index)}) в листе '{sheet.title}'")
                     break
         
         if model_column_index is None:
-            logging.warning(f"Столбец для модели '{product_key}' не найден в листе '{sheet.title}'. Доступные: {available_platforms}")
             return []
 
         found_solutions = []
-        search_string_lower = search_string.lower()
+        panic_string_lower = panic_string_cleaned.lower()
         try:
              for row_index in range(3, sheet.max_row + 1):
                  error_code_cell = sheet.cell(row=row_index, column=1).value
                  solution_cell = sheet.cell(row=row_index, column=model_column_index).value
-
+    
                  if not error_code_cell:
                      continue
                  error_code = str(error_code_cell).strip()
                  if not error_code:
-                continue
-                
-                 # --- Ищем код ошибки из Excel (error_code) как ПОДСТРОКУ в строке поиска (search_string) --- 
-                 if error_code.lower() in search_string_lower:
-                     logging.info(f"Найдено ВХОЖДЕНИЕ ПОДСТРОКИ! Код '{error_code}' из Excel найден в строке поиска '{search_string[:50]}...'")
-                     solution_text = str(solution_cell or "").strip()
-                     if solution_text:
-                          solution_data = {
-                              "solutions": [solution_text],
-                              "is_full": True,
-                              "matched_code": error_code # Сохраняем код из Excel, который совпал
-                          }
-                          found_solutions.append(solution_data)
-                     else:
-                         logging.warning(f"Найден код '{error_code}', но текст решения пуст (строка {row_index}, лист '{sheet.title}')")
-
+                      continue
+    
+                 # --- ВОЗВРАЩАЕМ ТОЧНЫЙ ПОИСК ПО ГРАНИЦАМ СЛОВА (\b) --- 
+                 try:
+                     # Ищем ТОЧНОЕ СЛОВО/КОД (с учетом регистра) с границами \b
+                     # Используем re.escape для безопасности, если код содержит спецсимволы regex
+                     if re.search(r'\b' + re.escape(error_code) + r'\b', panic_string_cleaned, re.IGNORECASE):
+                         logging.info(f"Найдено ТОЧНОЕ совпадение (границы слова)! Код '{error_code}' ... найден в ОЧИЩЕННОМ panic_string.")
+                         solution_text = str(solution_cell or "").strip()
+                         if solution_text:
+                              solution_data = {
+                                  "solutions": [solution_text],
+                                  "is_full": True, 
+                                  "matched_code": error_code
+                              }
+                              found_solutions.append(solution_data)
+                         # ... (лог для пустого решения)
+                 except re.error as e:
+                      logging.error(f"Ошибка regex при точном поиске кода '{error_code}': {e}")
+                      continue # Пропускаем этот код, если regex не сработал
         except Exception as e:
             logging.error(f"Ошибка при итерации по строкам листа '{sheet.title}': {e}", exc_info=True)
-            return found_solutions # Возвращаем то, что успели найти
+            # Возвращаем то, что успели найти до ошибки
+            return found_solutions
 
         if found_solutions:
-             logging.info(f"Найдено {len(found_solutions)} решений для '{product_key}' в листе '{sheet.title}' по строке поиска.")
-                else:
-             logging.info(f"Совпадений кодов ошибок в строке поиска не найдено для '{product_key}' в листе '{sheet.title}'.")
+             logging.info(f"Найдено {len(found_solutions)} решений для '{product_key}' в листе '{sheet.title}'")
+        else:
+             logging.info(f"Совпадений кодов ошибок в panic_string не найдено для '{product_key}' в листе '{sheet.title}'.")
         
-        return found_solutions
+        return found_solutions # Возвращаем ВЕСЬ список

@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any, List
 from config import Environ # Импортируем класс Environ
 import base64 # Добавлен импорт для analyze_image
 import time
+from services.analyzer.analyzer import LogAnalyzer
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -194,77 +195,103 @@ class GeminiAI:
 
 MAX_INPUT_TOKENS_SAFE = 30000 # Увеличим запасной лимит токенов для Gemini
 
-async def analyze_file_with_ai(panic_string: str, language: str = 'ru') -> str: # Убран db_solution
+async def analyze_file_with_ai(panic_string: str, db_solution: str = None, language: str = 'ru') -> str:
     """
-    Анализирует panic_string с помощью Gemini для извлечения КЛЮЧЕВОЙ СТРОКИ ОШИБКИ.
-    Использует класс GeminiAI.
+    Анализирует panic_string с помощью Gemini, опционально проверяя/улучшая решение из БД.
+    Использует класс GeminiAI, предоставленный пользователем.
     Формирует промпт на основе переданного языка ('ru' или 'en').
-    Возвращает извлеченную строку ошибки или сообщение об ошибке.
     """
-    gemini_ai = GeminiAI()
+    gemini_ai = GeminiAI() # Создаем экземпляр класса
     if not gemini_ai.api_key:
+         # Логгер уже должен был сработать в __init__, возвращаем ошибку
          return "Error: AI analysis service (Gemini) is unavailable due to missing API key." if language == 'en' else "Ошибка: Сервис анализа ИИ (Gemini) недоступен из-за отсутствия API ключа."
 
     try:
-        logging.info(f"Starting key error extraction with AI (Gemini). Language: {language}. Text length: {len(panic_string)}")
-        # Убрана проверка db_solution
+        logging.info(f"Starting file analysis with AI (Gemini - User Class). Language: {language}. Text length: {len(panic_string)}")
+        if db_solution:
+            logging.info(f"Provided DB solution for verification/improvement.")
 
-        # Обрезаем входной текст
+        # Обрезаем входной текст (используем свой лимит)
         panic_string = panic_string[:MAX_INPUT_TOKENS_SAFE]
         logging.info(f"Text prepared for Gemini. Length: {len(panic_string)}")
 
         # Формируем промпт для Gemini на основе языка
         if language == 'en':
             system_instruction = (
-                "You are an expert system analyzing iPhone crash logs (panic strings). "
-                "Your task is to EXTRACT the single, most relevant error code or concise error message phrase from the provided text. "
-                "Examples of expected output: 'Missing sensor(s): mic2', 'AppleBCMWLANCore', 'ap watchdog expired'. "
-                "Output ONLY the extracted error string, with no additional text, labels, or explanations. "
-                "Do not include 'panic(...)', 'Debugger message:', or similar prefixes."
+                "You are an expert iPhone repair technician. Analyze crash logs (panic string) and provide solutions. "
+                "Response format STRICTLY:\\n"
+                "MODEL: [device model if known, otherwise Unknown]\\n"
+                "SOLUTION: [specific steps for fixing]\\n"
+                "Do not use any markdown formatting (like **, *, etc.) in your response."
             )
-            user_content = (
-                f"Extract the key error code/message from the following panic string:\n\n"
-                f"--- Panic String Start ---\n{panic_string}\n--- Panic String End ---\n"
-            )
-            logging.info("Generated English prompt for Gemini (key error extraction).")
+            prompt_parts = [system_instruction]
+            if db_solution:
+                user_content = (
+                    f"\\n\\nConsider the provided database solution when analyzing the following iPhone error (panic string):\\n\\n"
+                    f"--- Panic String Start ---\\n{panic_string}\\n--- Panic String End ---\\n\\n"
+                    f"--- Database Solution Start ---\\n{db_solution}\\n--- Database Solution End ---\\n\\n"
+                    f"Provide the most accurate and complete final solution in the required format (MODEL / SOLUTION), incorporating or correcting the database solution as needed."
+                )
+                prompt_parts.append(user_content)
+                logging.info("Generated English prompt for Gemini (using DB solution as reference).")
+            else:
+                user_content = (
+                    f"\\n\\nAnalyze the following iPhone error (panic string) and provide a solution:\\n\\n"
+                    f"--- Panic String Start ---\\n{panic_string}\\n--- Panic String End ---\\n\\n"
+                    f"Provide the answer in the required format (MODEL / SOLUTION)."
+                )
+                prompt_parts.append(user_content)
+                logging.info("Generated English prompt for Gemini (generation from scratch).")
         else: # По умолчанию русский
              system_instruction = (
-                "Ты экспертная система, анализирующая crash-логи iPhone (panic strings). "
-                "Твоя задача - ИЗВЛЕЧЬ единственный, наиболее релевантный код ошибки или краткую фразу с описанием ошибки из предоставленного текста. "
-                "Примеры ожидаемого вывода: 'Missing sensor(s): mic2', 'AppleBCMWLANCore', 'ap watchdog expired'. "
-                "Выведи ТОЛЬКО извлеченную строку ошибки, без дополнительного текста, меток или объяснений. "
-                "Не включай 'panic(...)', 'Debugger message:' и подобные префиксы."
+                "Ты эксперт по ремонту iPhone. Анализируешь crash-логи (panic string) и предоставляешь решения. "
+                "Формат ответа СТРОГО:\\n"
+                "МОДЕЛЬ: [модель устройства, если известна, иначе Неизвестно]\\n"
+                "РЕШЕНИЕ: [конкретные шаги для исправления]\\n"
+                "Не используй никакую markdown-разметку (вроде **, *, и т.д.) в своем ответе."
             )
-             user_content = (
-                 f"Извлеки ключевой код/сообщение об ошибке из следующей panic string:\n\n"
-                 f"--- Panic String Начало ---\n{panic_string}\n--- Panic String Конец ---\n"
-             )
-             logging.info("Сформирован русский промпт для Gemini (извлечение ключевой ошибки).")
+             prompt_parts = [system_instruction]
+             if db_solution:
+                user_content = (
+                    f"\\n\\nУчти предоставленное решение из базы данных при анализе следующей ошибки iPhone (panic string):\\n\\n"
+                    f"--- Panic String Начало ---\\n{panic_string}\\n--- Panic String Конец ---\\n\\n"
+                    f"--- Решение из Базы Данных Начало ---\\n{db_solution}\\n--- Решение из Базы Данных Конец ---\\n\\n"
+                    f"Предоставь наиболее точное и полное окончательное решение в нужном формате (МОДЕЛЬ / РЕШЕНИЕ), используя или исправляя решение из базы данных по необходимости."
+                )
+                prompt_parts.append(user_content)
+                logging.info("Сформирован промпт для Gemini (используя решение из БД как референс).")
+             else:
+                user_content = (
+                    f"\\n\\nПроанализируй следующую ошибку iPhone (panic string) и предоставь решение:\\n\\n"
+                    f"--- Panic String Начало ---\\n{panic_string}\\n--- Panic String Конец ---\\n\\n"
+                    f"Предоставь ответ в нужном формате (МОДЕЛЬ / РЕШЕНИЕ)."
+                )
+                prompt_parts.append(user_content)
+                logging.info("Сформирован промпт для Gemini (генерация решения с нуля).")
 
-        full_prompt = f"{system_instruction}\n\n{user_content}"
+        full_prompt = "\\n".join(prompt_parts)
 
-        logging.info("Calling gemini_ai.generate_text for key error extraction...")
+        logging.info("Calling gemini_ai.generate_text...")
         start_time = time.time()
 
-        # Уменьшим max_tokens, так как ожидаем короткий ответ
-        ai_response = await gemini_ai.generate_text(prompt=full_prompt, max_tokens=150, temperature=0.2) # Низкая температура для точности
+        # Вызываем метод из класса пользователя
+        ai_response = await gemini_ai.generate_text(prompt=full_prompt, max_tokens=1000) # Укажем лимит токенов для ответа
 
         elapsed_time = time.time() - start_time
 
         if ai_response is None:
-             logging.error("gemini_ai.generate_text returned None during key error extraction")
+             # Метод generate_text должен вернуть None или строку с ошибкой в случае неудачи
+             logging.error("gemini_ai.generate_text returned None")
              return "Error: Failed to get response from AI (method returned None)." if language == 'en' else "Ошибка: Не удалось получить ответ от ИИ (метод вернул None)."
 
+        # Проверяем, не вернул ли метод строку с ошибкой (уже содержит 'Ошибка:' или 'Error:')
         if ai_response.startswith("Ошибка:") or ai_response.startswith("Error:"):
              logging.warning(f"Received error from gemini_ai.generate_text: {ai_response}")
-             return ai_response
+             return ai_response # Возвращаем текст ошибки как есть
 
-        # Убираем возможные кавычки и лишние пробелы из ответа ИИ
-        extracted_error = ai_response.strip().strip('"\'')
-
-        logging.info(f"Received key error string from Gemini API in {elapsed_time:.2f} seconds: '{extracted_error}' (Raw: '{ai_response.strip()}')")
-        return extracted_error
+        logging.info(f"Received response from Google Gemini API (User Class) in {elapsed_time:.2f} seconds. Length: {len(ai_response)}")
+        return ai_response.strip()
         
     except Exception as e:
-        logging.error(f"Unexpected error in analyze_file_with_ai (key error extraction): {str(e)}", exc_info=True)
+        logging.error(f"Unexpected error in analyze_file_with_ai using GeminiAI class: {str(e)}", exc_info=True)
         return f"Internal error processing AI request: {str(e)}" if language == 'en' else f"Внутренняя ошибка при обработке запроса ИИ: {str(e)}"

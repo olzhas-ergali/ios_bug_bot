@@ -186,46 +186,47 @@ async def document_analyze(message: Message, user, orm: ORM, i18n: I18n, state: 
         try:
             # Передаем product и panic_string в функцию поиска
             # find_error_solutions сама вызовет extract_product_info, но нам модель нужна и здесь
-            solutions_from_db = await log.find_error_solutions()
+            solutions_from_db = log.find_error_solutions() 
             
             first_solution_info = solutions_from_db[0] if solutions_from_db else {}
             solution_key = first_solution_info.get("solutions", [None])[0]
 
-            # --- Логика форматирования ответа ИИ --- 
-            # (Старая логика проверки SOLUTION_NOT_FOUND_DETAILED_KEY не нужна, 
-            #  т.к. ИИ всегда возвращает решение или ошибку)
-            if solutions_from_db:
-                 response_data = solutions_from_db[0] # Берем первый (и единственный) результат от ИИ
-                 ai_solution = response_data.get("solutions", [None])[0]
-                 ai_model = response_data.get("model", [model_name_for_response])[0]
-                 
-                 if ai_solution and not ai_solution.startswith("Ошибка анализа ИИ:") and not ai_solution.startswith("Неизвестная ошибка при ИИ-анализе:"):
-                      # Формируем ответ на основе данных от ИИ
-                      response_parts = []
-                      response_parts.append(f"Модель: {ai_model}")
-                      response_parts.append(f"Решение:\n{ai_solution}")
-                      final_response_text = "\n\n".join(response_parts)
-                      logging.info(f"Получено решение от ИИ для crash_key {crash_key}. Отправляем форматированный текст.")
-                 else:
-                      # Если ИИ вернул ошибку или пустой ответ
-                      error_msg = ai_solution or "Неизвестная ошибка от ИИ."
-                      logging.error(f"Ошибка от ИИ для crash_key {crash_key}: {error_msg}")
-                      # Сообщаем пользователю об ошибке
-                      final_response_text = i18n.gettext(
-                          "Модель: {model}\nРешение:\n{error_message}", 
-                          locale=user.lang
-                      ).format(model=ai_model, error_message=error_msg)
-            else:
-                # Если find_error_solutions вернул пустой список или None (маловероятно, но обрабатываем)
-                logging.error(f"find_error_solutions не вернул данных для crash_key {crash_key}")
+            if solution_key == SOLUTION_NOT_FOUND_DETAILED_KEY:
+                # Используем модель, извлеченную ранее
+                logging.info(f"Решение для crash_key {crash_key} (модель: {model_name_for_response}) в локальной БД не найдено.")
                 final_response_text = i18n.gettext(
-                         "Модель: {model}\nРешение:\nНе удалось получить ответ от сервиса анализа.", 
+                    "Модель: {model}\nРешение:\nРешение не найдено в нашей базе. Скоро добавим!", 
+                    locale=user.lang
+                ).format(model=model_name_for_response)
+            
+            elif solutions_from_db: 
+                solution_text = "\n".join(first_solution_info.get("solutions", []))
+                if solution_text: 
+                    # --- ВОЗВРАЩАЕМ ФОРМАТИРОВАНИЕ --- 
+                    response_parts = []
+                    response_parts.append(f"Модель: {model_name_for_response}")
+                    response_parts.append(f"Решение:\n{solution_text}")
+                    final_response_text = "\n\n".join(response_parts) # Разделяем блоки
+                    logging.info(f"Найдено решение из БД для crash_key {crash_key}. Отправляем форматированный текст.")
+                else:
+                    # Если текст решения пустой, считаем, что не найдено (используем новый формат)
+                    model_name = first_solution_info.get("model", ["Неизвестно"])[0] # Попытаемся получить модель, если она была передана
+                    logging.warning(f"Найдено совпадение для crash_key {crash_key}, но текст решения в БД пуст.")
+                    final_response_text = i18n.gettext(
+                         "Модель: {model}\nРешение:\nРешение не найдено в нашей базе. Скоро добавим!", 
                          locale=user.lang
-                    ).format(model=model_name_for_response)
+                    ).format(model=model_name)
+            else:
+                 # На случай, если find_error_solutions вернул пустой список (не должно происходить)
+                 logging.error(f"find_error_solutions вернул пустой список для {crash_key}")
+                 final_response_text = i18n.gettext(
+                         "Модель: Неизвестно\nРешение:\nРешение не найдено в нашей базе. Скоро добавим!", 
+                         locale=user.lang
+                    )
 
         except Exception as e:
-            logging.error(f"Ошибка вызова ИИ или форматирования его ответа: {e}", exc_info=True)
-            final_response_text = i18n.gettext("Ошибка при обработке запроса к ИИ.", locale=user.lang)
+            logging.error(f"Ошибка поиска/форматирования решения из БД: {e}", exc_info=True)
+            final_response_text = i18n.gettext("Ошибка при поиске решения в базе данных.", locale=user.lang)
 
         # --- Отправка финального ответа пользователю ---
         if not final_response_text: # На всякий случай, если текст пустой после всех проверок
