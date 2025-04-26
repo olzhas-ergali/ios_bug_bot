@@ -317,3 +317,39 @@ msgstr "6 months"
 #: services/telegram/misc/keyboards.py:126
 msgid "1 год"
 msgstr "1 year"
+
+#: services/telegram/misc/keyboards.py:29
+msgid "Мой баланс"
+msgstr "My Balance"
+
+#: services/telegram/misc/keyboards.py:30
+msgid "Пополнить баланс"
+msgstr "Top Up Balance"
+
+#: services/telegram/handlers/analyzer/analyzer.py:196
+#, python-format
+msgid "С вашего баланса списано {price}{symbol} за анализ файла. Остаток: {balance}{symbol}"
+msgstr "{price}{symbol} has been deducted from your balance for file analysis. Remaining balance: {balance}{symbol}"
+
+#: services/telegram/handlers/home/home.py:99
+#, python-format
+msgid "Для пополнения баланса свяжитесь с администратором:\n{contacts}"
+msgstr "To top up your balance, please contact the administrator:\n{contacts}"
+
+#: services/telegram/handlers/home/home.py:94
+msgid "Ошибка: администратор не найден."
+msgstr "Error: administrator not found."
+
+#: services/telegram/handlers/home/home.py:106
+#, python-format
+msgid "Пользователь @{username} ({user_id}) запросил пополнение баланса."
+msgstr "User @{username} ({user_id}) requested a balance top-up."
+
+#: services/telegram/handlers/home/home.py:244
+#, python-format
+msgid "Ваш текущий баланс: {balance}{symbol}"
+msgstr "Your current balance: {balance}{symbol}"
+
+#: services/telegram/handlers/analyzer/analyzer.py: ПО_НОВОМУ_НОМЕРУ_СТРОКИ
+msgid "solution_not_found_wait"
+msgstr "The solution for this error is not yet in our database. Please wait, we are working on adding it!"

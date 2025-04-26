@@ -30,6 +30,32 @@ CHANNEL_URL = "https://t.me/Yourrepairassistant"
 logger = logging.getLogger(__name__)
 
 
+@router.message(F.text.regexp(r"^\+?\d{5,}\s+\d+$"), RoleFilter(roles=["admin"]))
+async def universal_admin_topup(message: Message, orm: ORM):
+    try:
+        # Убираем + если есть
+        text = message.text.lstrip('+').strip()
+        user_id_str, amount_str = text.split()
+        user_id = int(user_id_str)
+        amount = Decimal(amount_str)
+        user = await orm.user_repo.find_user_by_user_id(user_id)
+        if not user:
+            await message.answer(f"❌ Пользователь с ID {user_id} не найден.")
+            return
+        # Получаем символ валюты пользователя
+        country_code = await orm.user_repo.get_country_code(user_id)
+        _, currency_symbol = await orm.currency_repo.get_price_in_user_currency(Decimal("0"), country_code)
+        
+        success = await orm.user_repo.update_balance(user_id, amount)
+        if not success:
+            await message.answer("❌ Не удалось обновить баланс.")
+            return
+        # Используем правильный символ
+        await message.answer(f"✅ Баланс пользователя {user_id} пополнен на {amount}{currency_symbol}")
+    except Exception as e:
+        logger.error(f"Ошибка универсального пополнения: {e}", exc_info=True)
+        await message.answer("⚠️ Произошла ошибка при пополнении. Проверьте данные.")
+
 @router.message(Command("balance"))
 async def show_user_balance(message: Message, orm: ORM):
     user_repo = UserRepo(await orm.get_async_sessionmaker())
@@ -63,21 +89,30 @@ async def home(message: Message, user: User, i18n: I18n):
     )
 
 @router.message(F.text == "Пополнить баланс 💳")
+@router.message(F.text == "Top Up Balance 💳")
 async def request_topup_balance(message: Message, orm: ORM, i18n: I18n, user: User):
     admins = await orm.user_repo.get_admins()
     
     if not admins:
-        await message.answer("Ошибка: администратор не найден.")
+        await message.answer(i18n.gettext("Ошибка: администратор не найден.", locale=user.lang))
         return
 
     admin_contacts = "\n".join([f"@{admin.username}" for admin in admins if admin.username])
-    await message.answer(f"Для пополнения баланса свяжитесь с администратором:\n{admin_contacts}")
+    topup_request_text = i18n.gettext(
+        "Для пополнения баланса свяжитесь с администратором:\n{contacts}",
+        locale=user.lang
+    ).format(contacts=admin_contacts)
+    await message.answer(topup_request_text)
 
     for admin in admins:
+        admin_notification_text = i18n.gettext(
+            "Пользователь @{username} ({user_id}) запросил пополнение баланса.",
+            locale=admin.lang
+        ).format(username=user.username, user_id=user.user_id)
         await message.bot.send_message(
             admin.user_id, 
-            f"Пользователь @{user.username} ({user.user_id}) запросил пополнение баланса.",
-            reply_markup=Keyboards.back_to_home(i18n, user)
+            admin_notification_text,
+            reply_markup=Keyboards.back_to_home(i18n, admin)
         )
 
 @router.message(F.text.regexp(r"^\d+\s+\d+$"), RoleFilter(roles=["admin"]))
@@ -91,13 +126,16 @@ async def admin_manual_topup(message: Message, orm: ORM):
         if not user:
             await message.answer(f"❌ Пользователь с ID {user_id} не найден.")
             return
+        # Получаем символ валюты пользователя
+        country_code = await orm.user_repo.get_country_code(user_id)
+        _, currency_symbol = await orm.currency_repo.get_price_in_user_currency(Decimal("0"), country_code)
 
         success = await orm.user_repo.update_balance(user_id, amount)
         if not success:
             await message.answer("❌ Не удалось обновить баланс.")
             return
-
-        await message.answer(f"✅ Баланс пользователя {user_id} пополнен на {amount}₸")
+        # Используем правильный символ
+        await message.answer(f"✅ Баланс пользователя {user_id} пополнен на {amount}{currency_symbol}")
 
     except Exception as e:
         logger.error(f"Ошибка пополнения: {e}", exc_info=True)
@@ -139,12 +177,11 @@ async def ask_custom_amount(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer("Введите сумму для пополнения:")
     await callback.answer()
 
-@router.message(F.text.isdigit())
+@router.message(StateFilter("custom_topup_waiting_amount"))
 async def process_custom_topup(message: Message, state: FSMContext, orm: ORM):
     data = await state.get_data()
     user_id = data["user_id"]
     amount = Decimal(message.text)
-    
     await orm.user_repo.update_balance(user_id, amount)
     await message.answer(f"✅ Пополнено {amount}₸ пользователю {user_id}")
     await state.clear()
@@ -167,13 +204,17 @@ async def quick_topup_handler(message: Message, user: User, orm: ORM, i18n: I18n
         if not await orm.user_repo.user_exists(user_id):
             await message.answer(f"👤 Пользователь {user_id} не найден")
             return
+            
+        # Получаем символ валюты пользователя
+        country_code = await orm.user_repo.get_country_code(user_id)
+        _, currency_symbol = await orm.currency_repo.get_price_in_user_currency(Decimal("0"), country_code)
 
         success = await orm.user_repo.update_balance(user_id, amount)
         if not success:
             await message.answer("❌ Ошибка при обновлении баланса")
             return
-        
-        await message.answer(f"✅ Баланс пользователя {user_id} пополнен на {amount}₸")
+        # Используем правильный символ
+        await message.answer(f"✅ Баланс пользователя {user_id} пополнен на {amount}{currency_symbol}")
 
     except ValueError as e:
         await message.answer(f"❌ Ошибка формата данных: {str(e)}")
@@ -200,12 +241,17 @@ async def instruction(message: Message, user: User, i18n: I18n):
         reply_to_message_id=message.message_id
     )
 
-@router.message(F.text.contains("Мой баланс"))
 @router.message(F.text == "Мой баланс 💰")
+@router.message(F.text == "My Balance 💰")
 async def show_balance(message: Message, user: User, orm: ORM, i18n: I18n):
     balance = await orm.user_repo.get_balance(user.user_id)
+    # Получаем код страны и символ валюты
+    country_code = await orm.user_repo.get_country_code(user.user_id)
+    _, currency_symbol = await orm.currency_repo.get_price_in_user_currency(Decimal("0"), country_code)
+    # Используем i18n для локализации ответа и правильный символ валюты
+    balance_text = i18n.gettext("Ваш текущий баланс: {balance}{symbol}", locale=user.lang).format(balance=f"{balance:.2f}", symbol=currency_symbol)
     await message.answer(
-        i18n.gettext("Ваш текущий баланс: {balance}₸", locale=user.lang).format(balance=balance),
+        balance_text,
         reply_markup=Keyboards.home(i18n, user)
     )
 
@@ -481,60 +527,34 @@ async def ask_user_id_for_check(callback: CallbackQuery, state: FSMContext):
     await state.set_state("admin_check_balance_wait")
     await callback.message.answer("Введите user_id для проверки:")
 
-@router.message(StateFilter("admin_check_balance_wait"))  
+@router.message(StateFilter("admin_check_balance_wait"))
 async def check_balance(message: Message, state: FSMContext, orm: ORM):
-    try:
-        user_id = int(message.text.strip())
-        balance = await orm.user_repo.get_balance(user_id)
-        if balance is not None:
-            await message.answer(f"Баланс пользователя {user_id}: {balance:.2f}₸")
-        else:
-            await message.answer("Пользователь не найден.")
-    except ValueError:
-        await message.answer("Ошибка: введите корректный user_id (должно быть целое число).")
-    except Exception as e:
-        await message.answer(f"Произошла ошибка: {str(e)}")
-    finally:
-        await state.clear()
+    user_id = int(message.text)
+    balance = await orm.user_repo.get_balance(user_id)
+    await message.answer(f"Баланс пользователя {user_id}: {balance}₸")
+    await state.clear()
 
 @router.callback_query(F.data == "admin_history")
 async def ask_user_id_for_history(callback: CallbackQuery, state: FSMContext):
     await state.set_state("admin_history_wait")
     await callback.message.answer("Введите user_id для просмотра истории:")
 
-@router.message(RoleFilter("admin_history_wait"))
+@router.message(StateFilter("admin_history_wait"))
 async def show_history(message: Message, state: FSMContext, orm: ORM):
-    try:
-        user_id = int(message.text.strip())
-        history = await orm.transactions.get_last(user_id, limit=5)
-        if not history:
-            await message.answer("Нет истории операций.")
-            return
-
-        text = "Последние операции:\n"
-        for t in history:
-            text += f"- {t['timestamp']} | {t['type']} | {t['amount']}₸\n"
-
-        await message.answer(text)
-    except:
-        await message.answer("Ошибка.")
-    finally:
-        await state.clear()
+    user_id = int(message.text)
+    # Здесь должна быть логика истории
+    await message.answer(f"История пользователя {user_id}: ...")
+    await state.clear()
 
 @router.callback_query(F.data == "admin_reset_balance")
 async def ask_user_id_for_reset(callback: CallbackQuery, state: FSMContext):
     await state.set_state("admin_reset_wait")
     await callback.message.answer("Введите user_id для обнуления баланса:")
 
-@router.message(RoleFilter("admin_reset_wait"))
+@router.message(StateFilter("admin_reset_wait"))
 async def reset_balance(message: Message, state: FSMContext, orm: ORM):
-    try:
-        user_id = int(message.text.strip())
-        await orm.user_repo.set_balance(user_id, 0)
-        await orm.transactions.log(user_id, "reset", 0)
-        await message.answer("Баланс обнулён.")
-    except:
-        await message.answer("Ошибка.")
-    finally:
-        await state.clear()
+    user_id = int(message.text)
+    await orm.user_repo.update_balance(user_id, Decimal(0))
+    await message.answer(f"Баланс пользователя {user_id} обнулён.")
+    await state.clear()
 

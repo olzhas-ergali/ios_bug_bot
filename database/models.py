@@ -89,3 +89,14 @@ class Transaction(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(20, 2), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(default=datetime.utcnow, nullable=False)  # Используем Python datetime
     admin_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+
+class CurrencyRate(Base):
+    __tablename__ = "currency_rates"
+    
+    id: Mapped[intpk]
+    country_code: Mapped[str] = mapped_column(String(2), unique=True, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(5), nullable=False)
+    target_price_per_usd: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    created_at: Mapped[created_at_pk]
+    updated_at: Mapped[updated_at_pk]

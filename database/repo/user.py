@@ -59,24 +59,25 @@ class UserRepo(Repo):
     async def deduct_analysis_fee(self, user_id: int, fee: Decimal, crash_key: str, bot: Bot) -> bool:
         async with self.sessionmaker() as session:
             async with session.begin():
+                # Проверяем по crash_key
                 existing = await session.scalar(
                     select(Subscription).where(Subscription.crash_key == crash_key))
                 if existing:
                     return True
+                # Проверяем по user_id
+                existing_user_sub = await session.scalar(
+                    select(Subscription).where(Subscription.user_id == user_id))
+                if not existing_user_sub:
+                    session.add(Subscription(
+                        user_id=user_id,
+                        crash_key=crash_key,
+                        date_start=datetime.now()
+                    ))
                 user = await session.scalar(select(User).where(User.user_id == user_id))
                 if not user or user.balance < fee:
                     return False
-                
                 user.balance -= fee
-                
-                session.add(Subscription(
-                    user_id=user_id,
-                    crash_key=crash_key,
-                    date_start=datetime.now()
-                ))
-                
                 return True
-
 
     async def find_all(self) -> list[User]:
         async with self.sessionmaker() as session:
@@ -362,3 +363,23 @@ class UserRepo(Repo):
                     description=description
                 )
                 session.add(transaction)
+
+    async def get_country_code(self, user_id: int) -> str:
+        async with self.sessionmaker() as session:
+            user = await session.scalar(select(User.country).where(User.user_id == user_id))
+            if not user:
+                 logger.warning(f"Не удалось получить страну для пользователя {user_id}. Возвращаем US.")
+                 return "US"
+            country = user.strip().upper()
+            logger.info(f"Определена страна для пользователя {user_id}: '{country}'") # Логируем полученную страну
+            # Добавляем больше вариантов для России и Казахстана
+            if country in ["КАЗАХСТАН", "KAZAKHSTAN", "KZ", "КЗ"]:
+                logger.info(f"Страна определена как KZ.")
+                return "KZ"
+            if country in ["РОССИЯ", "RUSSIA", "RU", "РФ", "RUSSIAN FEDERATION"]:
+                 logger.info(f"Страна определена как RU.")
+                 return "RU"
+                 
+            # Если не KZ или RU, возвращаем US как дефолт
+            logger.warning(f"Страна '{country}' не распознана как KZ или RU. Возвращаем US.")
+            return "US"

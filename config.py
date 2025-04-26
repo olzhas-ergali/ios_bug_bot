@@ -18,6 +18,7 @@ class Environ:
         self.application_channel_id = env.str("APPLICATION_CHANNEL_ID")
         self.tesseract_path = env.str("TESSERACT_PATH")
         self.openai_api_key = env.str("OPENAI_API_KEY")
+        self.gemini_api_key = env.str("GEMINI_API_KEY")
 
     def psycopg_url(self):
         return f"postgresql+psycopg2://{self.user}:{self.password}@{self.host}:{self.port}/{self.dbname}"
