@@ -1,0 +1,21 @@
+# Database configuration
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=postgres
+DB_NAME=app
+DB_PASSWORD=postgres
+# Bot configuration
+BOT_TOKEN=8169365186:
+LOGGING_LEVEL=10
+DEV_MODE=true
+ADMINS=7849042
+CHANNEL_ID=784904
+APPLICATION_CHANNEL_ID=784904
+
+# OCR and AI configuration
+TESSERACT_PATH=/usr/local/bin/tesseract
+GEMINI_API_KEY=AIzaSyDwL9O
+OPENAI_API_KEY=sk-proj
+
+# Payment configuration
+PRICE_PER_ANALYSIS=1.00

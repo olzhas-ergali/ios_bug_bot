@@ -34,7 +34,7 @@ router = Router()
 router.message.filter(RoleFilter(roles=["admin", "user"]))
 router.callback_query.filter(RoleFilter(roles=["admin", "user"]))
 
-PRICE_PER_ANALYSIS = Decimal(os.getenv("PRICE_PER_ANALYSIS", "10.00"))
+PRICE_PER_ANALYSIS = Decimal(os.getenv("PRICE_PER_ANALYSIS", "1.00"))
 os.makedirs("data/tmp", exist_ok=True)
 
 # Сообщение по умолчанию, если решение не найдено
@@ -183,10 +183,15 @@ async def document_analyze(message: Message, user, orm: ORM, i18n: I18n, state: 
 
         # --- Поиск решения ТОЛЬКО в локальной базе ---
         final_response_text = ""
+        solution_used_similarity = False # Инициализируем флаг
         try:
             # Передаем product и panic_string в функцию поиска
-            # find_error_solutions сама вызовет extract_product_info, но нам модель нужна и здесь
-            solutions_from_db = log.find_error_solutions() 
+            solutions_from_db = log.find_error_solutions()
+            
+            # Извлекаем флаг used_similarity из первого (и единственного) результата
+            if solutions_from_db:
+                solution_used_similarity = solutions_from_db[0].get("used_similarity", False)
+                logging.info(f"Флаг used_similarity из find_error_solutions: {solution_used_similarity}")
             
             first_solution_info = solutions_from_db[0] if solutions_from_db else {}
             solution_key = first_solution_info.get("solutions", [None])[0]
@@ -228,17 +233,64 @@ async def document_analyze(message: Message, user, orm: ORM, i18n: I18n, state: 
             logging.error(f"Ошибка поиска/форматирования решения из БД: {e}", exc_info=True)
             final_response_text = i18n.gettext("Ошибка при поиске решения в базе данных.", locale=user.lang)
 
-        # --- Отправка финального ответа пользователю ---
+        # --- Отправка финального ответа пользователю (ТОЛЬКО из Excel) ---
+        # --- ЭКСПЕРИМЕНТ: Анализ через AI для СРАВНЕНИЯ в логах (встроен в блок отправки) ---
+        # Важно: Этот результат НЕ будет отправлен пользователю!
+        ai_comparison_result = "AI анализ не проводился или не удался."
+        if panic_string: # panic_string был извлечен в начале функции document_analyze
+            try:
+                logging.info(f"--- [Сравнение] Запуск AI анализа для crash_key {crash_key} ---")
+                ai_response_text = await analyze_file_with_ai(panic_string=panic_string, language=user.lang)
+                if ai_response_text and not ai_response_text.startswith("Ошибка:") and not ai_response_text.startswith("Error:"):
+                    ai_comparison_result = ai_response_text.strip()
+                    logging.info(f"--- [Сравнение] Успешный результат AI анализа для crash_key {crash_key} ---")
+                else:
+                    ai_comparison_result = f"AI анализ вернул ошибку или пустой результат: {ai_response_text}"
+                    logging.warning(f"--- [Сравнение] Ошибка/пустой результат AI анализа для crash_key {crash_key}: {ai_response_text}")
+            except Exception as ai_err:
+                logging.error(f"--- [Сравнение] Исключение при вызове AI анализа для crash_key {crash_key}: {ai_err}", exc_info=True)
+                ai_comparison_result = f"Исключение при вызове AI анализа: {ai_err}"
+        else:
+            logging.warning(f"--- [Сравнение] AI анализ пропущен для crash_key {crash_key}, т.к. panic_string пуст или не извлечен.")
+
+        # Логируем ОБА результата для сравнения
+        logging.info(f"""--- [Сравнение] Результат EXCEL для crash_key {crash_key} ---
+{final_response_text}
+--- КОНЕЦ EXCEL --- """)
+        logging.info(f"""--- [Сравнение] Результат   AI  для crash_key {crash_key} ---
+{ai_comparison_result}
+--- КОНЕЦ AI --- """)
+        # -------------------------------------------------------------
+
         if not final_response_text: # На всякий случай, если текст пустой после всех проверок
             final_response_text = i18n.gettext("Не удалось сформировать ответ.", locale=user.lang)
 
-        for part in split_message(final_response_text):
-            sent_msg = await message.answer(part)
+        # Определяем текст для отправки (с суффиксом или без)
+        text_to_send = final_response_text
+        if solution_used_similarity: # Проверяем флаг
+            text_to_send += "\n\n*если вы думаете что инструкция неккоректна пишите @onyokaa*"
+            logging.info("Добавлен суффикс, так как использовался поиск по схожести.")
+        else:
+            logging.info("Суффикс не добавлен, так как НЕ использовался поиск по схожести.")
+
+        logging.info(f"--- [ПРОВЕРКА] Отправка ответа пользователю для crash_key {crash_key} ---")
+        sent_messages = []
+        # Используем text_to_send для отправки
+        for part in split_message(text_to_send):
+            # Отправляем с parse_mode="Markdown", если суффикс был добавлен (чтобы звездочки работали)
+            # Иначе отправляем обычным текстом
+            parse_mode = "Markdown" if solution_used_similarity else None 
+            sent_msg = await message.answer(part, parse_mode=parse_mode)
+            sent_messages.append(sent_msg) 
             if orm.settings and orm.settings.channel_id:
-                try:
-                    await sent_msg.forward(orm.settings.channel_id)
-                except Exception as e:
-                    logging.error(f"Ошибка пересылки в канал: {e}")
+                 try:
+                     await sent_msg.forward(orm.settings.channel_id)
+                 except Exception as e:
+                     logging.error(f"Ошибка пересылки в канал: {e}")
+
+        # Сохраняем результат ответа из базы данных (который был отправлен) в FSM для возможной кнопки "Полный лог"
+        # Используем оригинальный текст БЕЗ суффикса
+        await state.update_data(last_db_response=final_response_text)
 
     except Exception as e:
         # Общая обработка ошибок
