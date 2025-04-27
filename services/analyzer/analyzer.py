@@ -17,7 +17,34 @@ def preprocess_log_content(text):
     
     json_candidates = re.findall(r'\{.*?\}', text, re.DOTALL)
     if json_candidates:
-        return json_candidates[0]
+        best_candidate_with_panic = None
+        largest_valid_candidate = None
+        max_len = -1
+
+        for candidate in json_candidates:
+            try:
+                data = json.loads(candidate)
+                if isinstance(data, dict):
+                    has_panic_key = any(key.lower() == 'panicstring' for key in data.keys())
+
+                    if has_panic_key:
+                        best_candidate_with_panic = candidate
+                        logging.info("Найден JSON-кандидат с ключом 'panicString'.")
+                        break
+
+                    if len(candidate) > max_len:
+                        max_len = len(candidate)
+                        largest_valid_candidate = candidate
+
+            except json.JSONDecodeError:
+                continue
+
+        if best_candidate_with_panic:
+            logging.info("Выбран JSON-кандидат с ключом 'panicString'.")
+            return best_candidate_with_panic
+        elif largest_valid_candidate:
+            logging.info(f"Выбран самый большой валидный JSON-кандидат (длина: {max_len}).")
+            return largest_valid_candidate
     
     lines = text.split("\n")
     structured_data = {}
@@ -30,10 +57,12 @@ def preprocess_log_content(text):
     
     if structured_data:
         try:
+            logging.info("JSON не найден/выбран, собраны данные из пар ключ:значение.")
             return json.dumps(structured_data)
         except:
             pass
     
+    logging.info("JSON не найден/выбран, данные ключ:значение не собраны. Возвращается исходный текст.")
     return text 
 
 def fix_json_structure(text):
@@ -450,17 +479,23 @@ class LogAnalyzer:
         found_solutions = []
         panic_string_lower = panic_string_cleaned.lower()
         try:
+             # Итерирует по строкам, начиная с 3-й до последней.
              for row_index in range(3, sheet.max_row + 1):
+                 # Получает значение ячейки с кодом ошибки (колонка 1, т.е. 'A').
                  error_code_cell = sheet.cell(row=row_index, column=1).value
+                 # Получает значение ячейки с решением (колонка найденной модели).
                  solution_cell = sheet.cell(row=row_index, column=model_column_index).value
-    
+            
+                 # Если ячейка с кодом ошибки пустая, пропускает строку.
                  if not error_code_cell:
                      continue
+                 # Преобразует код ошибки в строку, удаляет пробелы по краям.
                  error_code = str(error_code_cell).strip()
+                 # Если код ошибки стал пустым, пропускает строку.
                  if not error_code:
-                      continue
-    
-                 # --- ВОЗВРАЩАЕМ ТОЧНЫЙ ПОИСК ПО ГРАНИЦАМ СЛОВА (\b) --- 
+                     continue
+                
+                 # --- ВОЗВРАЩАЕМ ТОЧНЫЙ ПОИСК ПО ГРАНИЦАМ СЛОВА (\b) ---
                  try:
                      # Ищем ТОЧНОЕ СЛОВО/КОД (с учетом регистра) с границами \b
                      # Используем re.escape для безопасности, если код содержит спецсимволы regex
@@ -470,22 +505,27 @@ class LogAnalyzer:
                          if solution_text:
                               solution_data = {
                                   "solutions": [solution_text],
-                                  "is_full": True, 
+                                  "is_full": True,
                                   "matched_code": error_code
                               }
                               found_solutions.append(solution_data)
-                         # ... (лог для пустого решения)
                  except re.error as e:
-                      logging.error(f"Ошибка regex при точном поиске кода '{error_code}': {e}")
-                      continue # Пропускаем этот код, если regex не сработал
+                     logging.error(f"Ошибка regex при точном поиске кода '{error_code}': {e}")
+                     # Устанавливаем правильный отступ для continue
+                     continue 
         except Exception as e:
+            # ...логирует ошибку с трассировкой.
             logging.error(f"Ошибка при итерации по строкам листа '{sheet.title}': {e}", exc_info=True)
-            # Возвращаем то, что успели найти до ошибки
+            # Возвращаем то, что успели найти до ошибки.
             return found_solutions
 
+        # Если найдены какие-либо решения в этом листе...
         if found_solutions:
+             # ...логирует количество найденных решений.
              logging.info(f"Найдено {len(found_solutions)} решений для '{product_key}' в листе '{sheet.title}'")
         else:
+             # ...логирует, что совпадений нет.
              logging.info(f"Совпадений кодов ошибок в panic_string не найдено для '{product_key}' в листе '{sheet.title}'.")
         
+        # Возвращаем список ВСЕХ найденных решений (словарей) для этого листа.
         return found_solutions # Возвращаем ВЕСЬ список
