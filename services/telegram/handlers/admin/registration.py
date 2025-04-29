@@ -39,15 +39,14 @@ async def accept_guest(callback: CallbackQuery,
         
         # Add monthly bonus info using tokens
         bonus_message_part += i18n.gettext(
+            "\n📊 Бонус: В течение 30 дней вы получаете 10 бесплатных анализов логов. Они не будут списывать ваши токены.",
+            locale=user.lang # Use user's language
+        )
+        
+        bonus_message_part += i18n.gettext(
             "\n🗓️ Также каждый месяц 1-го числа в 9:00 вам будет начисляться бонус в размере {monthly_count} токена.",
             locale=user.lang # Use user's language
         ).format(monthly_count=MONTHLY_BONUS_TOKENS)
-        
-        # ИЗМЕНЕНО: Добавляем информацию о подписке на устройство
-        bonus_message_part += i18n.gettext(
-            "\n💡 **Важно:** Первый анализ лога с *каждого нового устройства* стоит 1 токен (если решение найдено). После этого для *данного устройства* активируется 30-дневный период, в течение которого следующие 9 анализов будут **бесплатными**.",
-            locale=user.lang # Use user's language
-        )
         
     except Exception as e:
         logging.error(f"Ошибка начисления бонусных токенов пользователю {callback_data.user_id}: {e}")

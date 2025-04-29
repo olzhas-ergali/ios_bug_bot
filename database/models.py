@@ -22,7 +22,8 @@ class User(Base):
         Index('ix_users_balance', 'balance'),
         Index('ix_users_role', 'role'),
         Index('ix_users_lang', 'lang'),
-        Index('ix_user_id', 'user_id', postgresql_using='hash')
+        Index('ix_user_id', 'user_id', postgresql_using='hash'),
+        Index('ix_users_token_balance', 'token_balance')
     )
     id: Mapped[intpk]
     user_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
@@ -43,6 +44,7 @@ class User(Base):
     created_at: Mapped[created_at_pk]
     updated_at: Mapped[updated_at_pk]
     balance: Mapped[Decimal] = mapped_column(Numeric(20, 2), default=0)
+    token_balance: Mapped[int] = mapped_column(default=0, nullable=False)
 
 
 
@@ -66,16 +68,18 @@ class Subscription(Base):
     __tablename__ = "subscriptions"
     __table_args__ = (
         Index('ix_subscriptions_crash_key', 'crash_key', unique=True),
+        Index('ix_subscriptions_user_id', 'user_id'),
+        Index('ix_subscriptions_date_end', 'date_end')
     )
 
     id: Mapped[intpk]
-    user_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
-    balance: Mapped[Decimal] = mapped_column(Numeric(20, 2), default=0)
-    date_start = mapped_column(DateTime)
-    crash_key = mapped_column(String(255), unique=True)
-    date_end = mapped_column(DateTime)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    analysis_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    date_start: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    crash_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    date_end: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    is_warn = mapped_column(Boolean, default=False)
+    is_warn: Mapped[bool] = mapped_column(Boolean, default=False)
 
 class Transaction(Base):
     __tablename__ = "transactions"

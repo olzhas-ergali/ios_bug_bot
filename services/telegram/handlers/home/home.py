@@ -57,13 +57,12 @@ async def universal_admin_topup(message: Message, orm: ORM):
         await message.answer("⚠️ Произошла ошибка при пополнении. Проверьте данные.")
 
 @router.message(Command("balance"))
-async def show_user_balance(message: Message, orm: ORM):
-    user_repo = UserRepo(await orm.get_async_sessionmaker())
-    balance = await user_repo.get_balance(message.from_user.id)
-    if balance is not None:
-        await message.answer(f"💰 Ваш текущий баланс: {balance:.2f}₸")
-    else:
-        await message.answer("😕 Баланс не найден. Вы зарегистрированы?")
+async def show_user_balance(message: Message, orm: ORM, i18n: I18n, user: User):
+    # Use the new method to get token balance
+    token_balance = await orm.user_repo.get_token_balance(message.from_user.id)
+    # TODO: i18n: Ensure locale works correctly
+    # Display token balance
+    await message.answer(i18n.gettext("💰 Ваш текущий баланс: {balance} токенов.", locale=user.lang).format(balance=token_balance))
 
 @router.message(Command("admin_balance"))
 async def show_admin_menu(message: Message):
@@ -244,16 +243,11 @@ async def instruction(message: Message, user: User, i18n: I18n):
 @router.message(F.text == "Мой баланс 💰")
 @router.message(F.text == "My Balance 💰")
 async def show_balance(message: Message, user: User, orm: ORM, i18n: I18n):
-    balance = await orm.user_repo.get_balance(user.user_id)
-    # Получаем код страны и символ валюты
-    country_code = await orm.user_repo.get_country_code(user.user_id)
-    _, currency_symbol = await orm.currency_repo.get_price_in_user_currency(Decimal("0"), country_code)
-    # Используем i18n для локализации ответа и правильный символ валюты
-    balance_text = i18n.gettext("Ваш текущий баланс: {balance}{symbol}", locale=user.lang).format(balance=f"{balance:.2f}", symbol=currency_symbol)
-    await message.answer(
-        balance_text,
-        reply_markup=Keyboards.home(i18n, user)
-    )
+    # Use the new method to get token balance
+    token_balance = await orm.user_repo.get_token_balance(message.from_user.id)
+    # TODO: i18n: Ensure locale works correctly
+    # Display token balance
+    await message.answer(i18n.gettext("💰 Ваш текущий баланс: {balance} токенов.", locale=user.lang).format(balance=token_balance))
 
 @router.message(F.text == "Сменить язык " + "🏳️")
 @router.message(F.text == "Change language " + "🏳️")

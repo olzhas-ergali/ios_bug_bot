@@ -27,57 +27,68 @@ class UserRepo(Repo):
             result = await session.scalar(select(User.balance).where(User.user_id == user_id))
             return result or Decimal('0.00')
 
-    async def update_balance(self, user_id: int, amount: Decimal) -> bool:
+    async def get_token_balance(self, user_id: int) -> int:
+        """Возвращает баланс токенов пользователя."""
+        async with self.sessionmaker() as session:
+            result = await session.scalar(select(User.token_balance).where(User.user_id == user_id))
+            return result or 0
+
+    async def add_tokens(self, user_id: int, tokens_to_add: int) -> bool:
+        """Добавляет указанное количество токенов пользователю."""
+        if tokens_to_add <= 0:
+            logger.warning(f"Attempted to add non-positive tokens ({tokens_to_add}) for user {user_id}")
+            return False
         async with self.sessionmaker() as session:
             async with session.begin():
-                try:
-                    # Найти пользователя по полю user_id, а не по первичному ключу
-                    user = await session.scalar(select(User).where(User.user_id == user_id))
-                    if user is None:
-                        logger.error(f"User {user_id} not found")
-                        return False
-
-                    user.balance += amount
-                    
-                    # Создать транзакцию, а не UserRepo
-                    transaction = Transaction(
-                        user_id=user_id,
-                        type="topup",
-                        amount=amount
-                    )
-                    session.add(transaction)
-                    
-                    await session.commit()
-                    
-                    logger.info(f"Balance updated for {user_id}: {user.balance}")
-                    return True
-                except Exception as e:
-                    logger.error(f"Error updating balance for user {user_id}: {str(e)}")
+                result = await session.execute(
+                    update(User)
+                    .where(User.user_id == user_id)
+                    .values(token_balance=User.token_balance + tokens_to_add)
+                    .returning(User.token_balance)
+                )
+                new_balance = result.scalar_one_or_none()
+                if new_balance is None:
+                    logger.error(f"User {user_id} not found when trying to add tokens.")
                     await session.rollback()
                     return False
+                else:
+                    logger.info(f"Added {tokens_to_add} tokens to user {user_id}. New token balance: {new_balance}")
+                    await session.commit()
+                    return True
 
-    async def deduct_analysis_fee(self, user_id: int, fee: Decimal, crash_key: str, bot: Bot) -> bool:
+    async def deduct_token(self, user_id: int) -> bool:
+        """Списывает 1 токен с баланса пользователя. Возвращает True если успешно, False если недостаточно токенов или ошибка."""
         async with self.sessionmaker() as session:
             async with session.begin():
-                # Проверяем по crash_key
-                existing = await session.scalar(
-                    select(Subscription).where(Subscription.crash_key == crash_key))
-                if existing:
-                    return True
-                # Проверяем по user_id
-                existing_user_sub = await session.scalar(
-                    select(Subscription).where(Subscription.user_id == user_id))
-                if not existing_user_sub:
-                    session.add(Subscription(
-                        user_id=user_id,
-                        crash_key=crash_key,
-                        date_start=datetime.now()
-                    ))
-                user = await session.scalar(select(User).where(User.user_id == user_id))
-                if not user or user.balance < fee:
+                # Check current balance first to avoid negative balance constraint issues
+                current_balance = await session.scalar(
+                    select(User.token_balance).where(User.user_id == user_id)
+                )
+                if current_balance is None:
+                     logger.error(f"User {user_id} not found when trying to deduct token.")
+                     return False
+                if current_balance < 1:
+                    logger.warning(f"Insufficient token balance for user {user_id} (has {current_balance}, needs 1). Deduction failed.")
                     return False
-                user.balance -= fee
-                return True
+
+                # Perform deduction
+                result = await session.execute(
+                    update(User)
+                    .where(User.user_id == user_id)
+                    .where(User.token_balance >= 1) # Double check condition
+                    .values(token_balance=User.token_balance - 1)
+                    .returning(User.token_balance)
+                )
+                new_balance = result.scalar_one_or_none()
+                if new_balance is not None:
+                    logger.info(f"Deducted 1 token from user {user_id}. New token balance: {new_balance}")
+                    await session.commit()
+                    return True
+                else:
+                     # Should not happen if pre-check passed, but log just in case
+                    logger.error(f"Failed to deduct token for user {user_id}, possibly due to concurrent update or balance check discrepancy.")
+                    await session.rollback()
+                    return False
 
     async def find_all(self) -> list[User]:
         async with self.sessionmaker() as session:

@@ -321,29 +321,29 @@ class LogAnalyzer:
         try:
             panic_workbook = openpyxl.load_workbook("./data/panic_codes.xlsx")
             try:
-                self.panic_sheet = panic_workbook[lang]
-                logging.info(f"Loaded sheet '{lang}' from panic_codes.xlsx")
+                 self.panic_sheet = panic_workbook[lang]
+                 logging.info(f"Loaded sheet '{lang}' from panic_codes.xlsx")
             except KeyError:
-                self.panic_sheet = panic_workbook.active
-                logging.warning(f"Sheet '{lang}' not found in panic_codes.xlsx, using active sheet: '{self.panic_sheet.title}'")
+                 # Fallback to active sheet if language sheet not found
+                 self.panic_sheet = panic_workbook.active
+                 logging.warning(f"Sheet '{lang}' not found in panic_codes.xlsx, using active sheet: '{self.panic_sheet.title}'")
         except FileNotFoundError:
             logging.error("File ./data/panic_codes.xlsx not found!")
         except Exception as e:
             logging.error(f"Error loading panic_codes.xlsx: {e}")
 
-        # Load nand_list.xlsx
+        # Load nand_list.xlsx - Assuming single sheet with language columns
         try:
             nand_workbook = openpyxl.load_workbook("./data/nand_list.xlsx")
-            try:
-                self.nand_sheet = nand_workbook[lang]
-                logging.info(f"Loaded sheet '{lang}' from nand_list.xlsx")
-            except KeyError:
-                self.nand_sheet = nand_workbook.active
-                logging.warning(f"Sheet '{lang}' not found in nand_list.xlsx, using active sheet: '{self.nand_sheet.title}'")
+            # Use the active sheet as there's only one relevant sheet expected
+                 self.nand_sheet = nand_workbook.active
+            logging.info(f"Loaded active sheet '{self.nand_sheet.title}' from nand_list.xlsx")
         except FileNotFoundError:
-            logging.warning("File ./data/nand_list.xlsx not found! Search will not be possible.")
+            logging.warning("File ./data/nand_list.xlsx not found! NAND info search will not be possible.")
+            self.nand_sheet = None # Ensure nand_sheet is None if file not found
         except Exception as e:
             logging.error(f"Error loading nand_list.xlsx: {e}")
+            self.nand_sheet = None # Ensure nand_sheet is None on other errors
 
     # Keep _read_log_file as a static method
     @staticmethod
@@ -393,7 +393,7 @@ class LogAnalyzer:
             return None
         if not error_code_to_find:
              logging.warning(f"_find_solution_by_code: error_code_to_find is empty or None, cannot search.")
-             return None
+            return None
 
         model_column_index = None
         try:
@@ -412,7 +412,7 @@ class LogAnalyzer:
                     model_column_index = cell.column
                     logging.info(f"Found column {get_column_letter(model_column_index)} for model '{product_key}' in sheet '{sheet.title}'.")
                     break
-
+        
         if model_column_index is None:
             logging.warning(f"Column for model '{product_key}' (cleaned key: '{product_key_cleaned}') not found in sheet '{sheet.title}'.")
             return None
@@ -426,7 +426,7 @@ class LogAnalyzer:
             error_code_cell = sheet.cell(row=row_index, column=1).value
             if not error_code_cell:
                 continue
-
+                
             error_code_in_sheet = str(error_code_cell).strip().lower()
             # Case-insensitive comparison
             if error_code_in_sheet == error_code_lower:
@@ -451,3 +451,64 @@ class LogAnalyzer:
             logging.info(f"Solution not found for code '{error_code_to_find}' and model '{product_key}' in sheet '{sheet.title}'.")
 
         return found_solution_text # Returns the solution text or None
+
+    # --- New method for NAND lookup ---
+    def _find_nand_info_by_model(self, nand_model_to_find, lang='ru'):
+        """
+        Searches for an exact match of nand_model_to_find in column 'A' of the nand_sheet
+        and returns the description from column 'B' (ru) or 'C' (en).
+        Returns the description text or None. Case-insensitive search for model.
+        Assumes header is in row 1, data starts from row 2.
+        Column A: Model, Column B: ru Description, Column C: en Description
+        """
+        if not self.nand_sheet:
+            logging.warning(f"_find_nand_info_by_model: nand_sheet is None (likely file not found or failed to load), cannot search.")
+            return None
+        if not nand_model_to_find:
+            logging.warning(f"_find_nand_info_by_model: nand_model_to_find is empty or None, cannot search.")
+            return None
+
+        # Determine column index based on language
+        if lang.lower() == 'en':
+            info_column_index = 3 # Column C
+            lang_name = 'en'
+        else:
+            info_column_index = 2 # Column B (default to 'ru')
+            lang_name = 'ru'
+
+        logging.info(f"Searching for NAND model '{nand_model_to_find}' in sheet '{self.nand_sheet.title}', lang='{lang_name}' (column {get_column_letter(info_column_index)})...")
+        found_info_text = None
+        search_model_lower = str(nand_model_to_find).strip().lower()
+
+        try:
+            # Iterate rows starting from row 2 (assuming row 1 is header)
+            for row_index in range(2, self.nand_sheet.max_row + 1):
+                model_cell = self.nand_sheet.cell(row=row_index, column=1).value # Column A
+                if not model_cell:
+                    continue # Skip empty model cells
+
+                model_in_sheet = str(model_cell).strip().lower()
+
+                # Case-insensitive comparison
+                if model_in_sheet == search_model_lower:
+                    info_cell = self.nand_sheet.cell(row=row_index, column=info_column_index).value
+                    info_text = str(info_cell or "").strip()
+                    if info_text:
+                        logging.info(f"Found exact match for NAND model '{nand_model_to_find}' in row {row_index}. Info found for lang='{lang_name}'.")
+                        found_info_text = info_text
+                        break # Found the first match, exit loop
+                    else:
+                        # Found the model, but the description for this lang is empty.
+                        logging.warning(f"Found NAND model '{nand_model_to_find}' in row {row_index}, but info cell for lang='{lang_name}' is empty.")
+                        # Should we return None or keep searching? For exact match, stop.
+                        break # Stop searching once the model is found, even if info is empty for this lang
+
+            if not found_info_text:
+                # This covers model not found, or model found but info empty for the language
+                 logging.info(f"NAND Information not found for model '{nand_model_to_find}' with lang='{lang_name}' in sheet '{self.nand_sheet.title}'.")
+
+        except Exception as e:
+            logging.error(f"Error searching NAND info in sheet '{self.nand_sheet.title}': {e}")
+            return None # Return None on error during search
+
+        return found_info_text # Returns the description text or None

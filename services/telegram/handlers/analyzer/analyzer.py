@@ -5,6 +5,7 @@ import logging
 import redis
 import hashlib
 import openpyxl
+import asyncio
 from PIL import Image
 import pytesseract
 from decimal import Decimal
@@ -19,8 +20,13 @@ from services.telegram.filters.role import RoleFilter
 from services.telegram.misc.callbacks import ChooseModelCallback, FullButtonCallback
 from services.telegram.misc.keyboards import Keyboards
 from services.telegram.ai.ai import analyze_log_via_ai
+from datetime import datetime, timedelta
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+# --- ДОБАВЛЕНО: Семафор для ограничения одновременных вызовов OpenAI ---
+# Значение 1 означает, что только один анализ будет выполняться одновременно
+openai_semaphore = asyncio.Semaphore(1)
 
 try:
     cache = redis.Redis(host='localhost', port=6379, db=0, socket_connect_timeout=1)
@@ -77,37 +83,18 @@ async def save_file(message: Message, file_type: str = "document") -> str:
         logging.error(f"Ошибка сохранения файла: {e}")
         return None
 
-async def process_analysis_payment(
-    user_id: int,
-    crash_key: str,
-    orm: ORM,
-    bot: Bot,
-    price: Decimal = PRICE_PER_ANALYSIS
-) -> tuple[bool, Decimal, str]:
-    user = await orm.user_repo.find_user_by_user_id(user_id)
-    if not user:
-        return False, Decimal(0), ""
-
-    country_code = await orm.user_repo.get_country_code(user_id)
-    price_in_currency, currency_symbol = await orm.currency_repo.get_price_in_user_currency(price, country_code)
-    balance = await orm.user_repo.get_balance(user_id)
-
-    if balance < price_in_currency:
-        return False, price_in_currency, currency_symbol
-    
-    if await orm.subscription_repo.check_crash_key_exists(crash_key):
-        return True, price_in_currency, currency_symbol
-
-    return True, price_in_currency, currency_symbol
-
 @router.message(F.document.file_name.endswith((".ips", ".txt", ".json")))
 async def document_analyze(message: Message, user, orm: ORM, i18n: I18n, state: FSMContext):
+    
+    # Используем семафор для контроля доступа к блоку анализа
+    async with openai_semaphore:
     await message.chat.do("typing")
     path = None
-    final_response_text = "" # Initialize response text
-    ai_analysis_result = None # Initialize AI result
-    solution_from_excel = None # Initialize Excel solution
-    log_analyzer_instance = None # Initialize LogAnalyzer instance
+        final_response_text = ""
+        ai_analysis_result = None
+        solution_from_excel = None
+        log_analyzer_instance = None
+        analysis_result = None # To store if analysis was paid, free, or failed due to balance
 
     try:
         # --- Сохранение файла ---
@@ -122,90 +109,94 @@ async def document_analyze(message: Message, user, orm: ORM, i18n: I18n, state: 
             log_content = LogAnalyzer._read_log_file(path)
             if not log_content:
                  await message.answer(i18n.gettext("Файл пустой или не удалось прочитать.", locale=user.lang))
+                     # Ensure file is cleaned up even if empty
+                     if path and os.path.exists(path):
+                         try: os.remove(path); logging.info(f"Удален пустой/нечитаемый файл: {path}")
+                         except OSError as e_rm: logging.error(f"Ошибка удаления файла {path}: {e_rm}")
                  return
         except Exception as e:
             logging.error(f"Ошибка чтения файла {path}: {e}", exc_info=True)
             await message.answer(i18n.gettext("Ошибка чтения файла.", locale=user.lang))
+                # Ensure file is cleaned up on read error
+                if path and os.path.exists(path):
+                    try: os.remove(path); logging.info(f"Удален файл после ошибки чтения: {path}")
+                    except OSError as e_rm: logging.error(f"Ошибка удаления файла {path}: {e_rm}")
             return
 
-        # --- Генерация Crash Key (если возможно из имени файла или контента) ---
-        # Генерируем ключ до проверки баланса
-        try:
-            # Попробуем извлечь из JSON, если он там есть (базовый парсинг)
+            # --- Генерация Crash Key ---
             crash_key = None
             try:
-                log_dict_simple = json.loads(log_content)
-                crash_key = log_dict_simple.get("crashReporterKey")
-            except json.JSONDecodeError:
-                 logging.warning("Лог не является чистым JSON, crashReporterKey не извлечен стандартно.")
-                 pass # Ошибка парсинга JSON ожидаема для многих логов
+                 log_dict_simple = parse_json_safely(log_content) # Use safe parsing
+                 if isinstance(log_dict_simple, dict):
+                      # Case-insensitive search for key
+                      for key in log_dict_simple:
+                           if key.lower() == "crashreporterkey":
+                                crash_key = log_dict_simple[key]
+                                break
 
             if not crash_key:
-                 key_source = log_content # Используем весь контент для хэша, если ключа нет
+                     key_source = log_content
                  crash_key = hashlib.md5(key_source.encode()).hexdigest()
                  logging.info(f"crashReporterKey не найден/извлечен, сгенерирован хэш из содержимого лога: {crash_key}")
+                 else:
+                      logging.info(f"Извлечен crashReporterKey: {crash_key}")
 
         except Exception as e:
              logging.error(f"Не удалось сгенерировать crash_key: {e}", exc_info=True)
-             # В крайнем случае используем имя файла
              crash_key = hashlib.md5(os.path.basename(path).encode()).hexdigest()
              logging.warning(f"Использован хэш имени файла как crash_key: {crash_key}")
 
-        # --- Проверка и СПИСАНИЕ БАЛАНСА ---
-        base_price = Decimal(os.getenv("PRICE_PER_ANALYSIS", "1.00"))
-        ok, price_in_currency, currency_symbol = await process_analysis_payment(user.user_id, crash_key, orm, message.bot, base_price)
 
-        if not ok:
-            await message.answer(i18n.gettext("Недостаточно средств на балансе. Необходимо {price}{symbol}.", locale=user.lang).format(price=price_in_currency, symbol=currency_symbol))
-            return
-
-        # --- Списание средств (если необходимо) ---
-        deduct_success = False
-        try:
-            if not await orm.subscription_repo.check_crash_key_exists(crash_key):
-                logging.info(f"Списание {price_in_currency}{currency_symbol} с пользователя {user.user_id} за crash_key {crash_key}")
-                deduct_success = await orm.user_repo.deduct_analysis_fee(user.user_id, price_in_currency, crash_key, message.bot)
-                if deduct_success:
-                    logging.info(f"Списание УСПЕШНО для {user.user_id}.")
-                    try:
-                        balance = await orm.user_repo.get_balance(user.user_id)
-                        deduction_text = i18n.gettext(
-                           "С вашего баланса списано {price}{symbol} за анализ файла. Остаток: {balance}{symbol}",
-                           locale=user.lang
-                        ).format(price=price_in_currency, symbol=currency_symbol, balance=balance)
-                        await message.answer(deduction_text)
-                    except Exception as e:
-                        logging.error(f"Ошибка отправки уведомления о списании: {e}")
-                else:
-                    logging.warning(f"Списание НЕ УДАЛОСЬ для {user.user_id}.")
-                    await message.answer(i18n.gettext("Ошибка при списании средств. Пожалуйста, проверьте баланс или обратитесь к администратору.", locale=user.lang))
-                    return # Прерываем, если списание не удалось
+            # --- Проверка Подписки и Баланса Токенов ---
+            analysis_result = "pending" # paid, free_sub, no_tokens
+            subscription = await orm.subscription_repo.get_subscription(user.user_id, crash_key)
+            now = datetime.now()
+            is_subscription_active_and_valid = False
+    
+            if subscription and subscription.date_end and now < subscription.date_end and subscription.analysis_count < 10:
+                 is_subscription_active_and_valid = True
+                 analysis_result = "free_sub"
+                 logging.info(f"Активная подписка найдена для user {user.user_id}, crash_key {crash_key}. Анализ будет бесплатным ({subscription.analysis_count + 1}/10).")
             else:
-                logging.info(f"Пользователь {user.user_id} уже оплачивал анализ для crash_key {crash_key}. Списание не требуется.")
-                deduct_success = True # Считаем успешным, так как уже оплачено
-        except Exception as e:
-            logging.error(f"Ошибка на этапе проверки/списания: {e}", exc_info=True)
-            await message.answer(i18n.gettext("Внутренняя ошибка при обработке платежа.", locale=user.lang))
-            return
+                 # Если нет активной подписки, проверяем баланс токенов
+                 token_balance = await orm.user_repo.get_token_balance(user.user_id)
+                 if token_balance >= 1:
+                     analysis_result = "paid"
+                     logging.info(f"Подписка неактивна/нет. Баланс токенов ({token_balance}) достаточен. Анализ будет платным (1 токен).")
+                 else:
+                     analysis_result = "no_tokens"
+                     logging.warning(f"Недостаточно токенов для user {user.user_id} (баланс: {token_balance}).")
+                     # TODO: i18n: Localize no tokens message
+                     await message.answer(i18n.gettext("Недостаточно токенов на балансе. Необходимо 1 токен для анализа.", locale=user.lang))
+                     # Ensure file is cleaned up on no tokens
+                     if path and os.path.exists(path):
+                          try: os.remove(path); logging.info(f"Удален файл из-за нехватки токенов: {path}")
+                          except OSError as e_rm: logging.error(f"Ошибка удаления файла {path}: {e_rm}")
+                     return # Прерываем выполнение
 
         # --- Анализ с помощью AI ---
         logging.info(f"Вызов analyze_log_via_ai для файла {path}...")
-        await message.chat.do("typing") # Показываем индикатор на время AI анализа
+            await message.chat.do("typing")
         try:
+                # Этот вызов теперь внутри семафора
             ai_analysis_result = await analyze_log_via_ai(log_content, KNOWN_ERROR_CODES)
-        except Exception as e:
-            logging.error(f"Ошибка при вызове analyze_log_via_ai: {e}", exc_info=True)
-            await message.answer(i18n.gettext("Ошибка при обращении к сервису анализа AI.", locale=user.lang))
-            return # Прерываем, если AI недоступен
-
+            except Exception as e: # Ловим общую ошибку здесь на всякий случай, хотя ai.py должен возвращать None
+                logging.error(f"Непредвиденная ошибка при вызове analyze_log_via_ai в обработчике: {e}", exc_info=True)
+                ai_analysis_result = None # Устанавливаем в None, чтобы обработать ниже
+            
+            # --- Обработка результата AI и поиск решения в Excel ---
         if not ai_analysis_result:
-            logging.warning(f"Анализ AI для файла {path} не вернул результат.")
-            await message.answer(i18n.gettext("Не удалось проанализировать лог с помощью AI. Возможно, лог имеет не стандартный формат.", locale=user.lang))
-            # Не прерываем полностью, можем попробовать показать только базовую инфу, если есть
-            # Но пока просто выходим
+                logging.warning(f"Анализ лога для файла {path} не вернул результат или произошла ошибка.")
+                # TODO: i18n: Localize AI no result/error message
+                # ИЗМЕНЕНО: Убрано слово "AI"
+                await message.answer(i18n.gettext("Не удалось проанализировать лог. Возможно, сервис анализа временно недоступен или формат лога не стандартный.", locale=user.lang))
+                # Токен не списываем, т.к. анализ не удался
+                # Сообщение об этом теперь не нужно, т.к. списание происходит только при успехе
+                # if analysis_result == "paid":
+                #     await message.answer(i18n.gettext("Токен не был списан.", locale=user.lang))
+                # Возвращаемся, чтобы finally удалил файл
             return
 
-        # --- Извлечение данных из результата AI ---
         product_id = ai_analysis_result.get("product")
         os_version = ai_analysis_result.get("os_version")
         timestamp = ai_analysis_result.get("timestamp")
@@ -215,88 +206,126 @@ async def document_analyze(message: Message, user, orm: ORM, i18n: I18n, state: 
         os_version_str = os_version if os_version else "Неизвестно"
         timestamp_str = timestamp if timestamp else "Неизвестно"
 
-        # --- Формирование заголовка ответа ---
         output_header_parts = [
-            f"*Модель:* {model_name} ({product_id})" if product_id else "*Модель:* Неизвестно",
-            f"*Версия iOS:* {os_version_str}",
-            f"*Дата сбоя:* {timestamp_str}"
+                f"*{i18n.gettext('Информация об устройстве:', locale=user.lang)}*",
+                f"📱 {i18n.gettext('Модель:', locale=user.lang)} {model_name} ({product_id})" if product_id else f"📱 {i18n.gettext('Модель:', locale=user.lang)} {i18n.gettext('Неизвестно', locale=user.lang)}",
+                f"🛠️ {i18n.gettext('Версия iOS:', locale=user.lang)} {os_version_str}",
+                f"📅 {i18n.gettext('Дата сбоя:', locale=user.lang)} {timestamp_str}"
         ]
         output_header = "\n".join(output_header_parts)
         logging.info(f"Сформирован заголовок: {output_header}")
 
-        # --- Поиск решения в Excel по данным от AI ---
+            solution_found_in_excel = False
         if error_code_from_ai and product_id and product_id.lower() != "неизвестно":
             logging.info(f"Поиск решения в Excel для модели '{product_id}' и кода '{error_code_from_ai}'...")
-            await message.chat.do("typing") # Еще один индикатор на время поиска в Excel
+                await message.chat.do("typing")
             try:
-                # Инициализируем LogAnalyzer ЗДЕСЬ, только если нужен поиск в Excel
                 log_analyzer_instance = LogAnalyzer(lang=user.lang)
-
-                # Ищем сначала в panic_codes.xlsx
-                solution_from_excel = log_analyzer_instance._find_solution_by_code(
-                    log_analyzer_instance.panic_sheet,
-                    product_id,
-                    error_code_from_ai
-                )
-                if solution_from_excel:
-                    logging.info(f"Решение найдено в panic_codes.xlsx")
-                else:
-                    logging.info(f"Решение НЕ найдено в panic_codes.xlsx, ищем в nand_list.xlsx...")
-                    # Если не нашли в panic, ищем в nand_list.xlsx
                     solution_from_excel = log_analyzer_instance._find_solution_by_code(
-                        log_analyzer_instance.nand_sheet,
-                        product_id,
-                        error_code_from_ai
+                        log_analyzer_instance.panic_sheet, product_id, error_code_from_ai
                     )
                     if solution_from_excel:
-                         logging.info(f"Решение найдено в nand_list.xlsx")
+                        logging.info(f"Решение найдено в panic_codes.xlsx")
+                        solution_found_in_excel = True
                     else:
-                         logging.info(f"Решение НЕ найдено и в nand_list.xlsx.")
+                         # Убрал поиск в NAND здесь, т.к. его логика вынесена отдельно и не является прямым решением
+                         logging.info(f"Решение НЕ найдено в panic_codes.xlsx.")
 
             except Exception as e:
                 logging.error(f"Ошибка при поиске решения в Excel: {e}", exc_info=True)
-                # Не прерываем, просто решение не будет найдено
 
         # --- Формирование финального ответа ---
-        solution_part = ""
-        if error_code_from_ai:
-            solution_part += f"\n\n*Код ошибки (AI):* `{error_code_from_ai}`" # Используем ` для кода
             if solution_from_excel:
-                solution_part += f"\n\n*Решение (Excel):*\n{solution_from_excel}"
-            elif product_id and product_id.lower() != "неизвестно":
-                # Код ошибки есть, но решения для этой модели нет
-                solution_part += f"\n\n*Решение:* {i18n.gettext(SOLUTION_NOT_FOUND_DETAILED_KEY, locale=user.lang)}" # Используем ключ локализации
+                # Обрабатываем текст решения для лучшего отображения Markdown
+                processed_solution = solution_from_excel.strip()
+                # Добавляем пробел после дефиса в начале строки для корректного списка
+                processed_solution = re.sub(r"^\s*-", "- ", processed_solution, flags=re.MULTILINE)
+                
+                final_response_text = f"{output_header}\n\n*{i18n.gettext('Решение:', locale=user.lang)}*\n{processed_solution}"
             else:
-                 # Код ошибки есть, но модель неизвестна, поиск не выполнялся
-                 solution_part += f"\n\n*Решение:* Невозможно выполнить поиск в базе (модель не определена)."
-        else:
-            solution_part += f"\n\n*Код ошибки:* {i18n.gettext('Не удалось определить код ошибки по логу.', locale=user.lang)}"
+                # Если Excel не помог
+                # TODO: i18n: Localize new title and no solution message
+                # ИЗМЕНЕНО: Добавляем жирный заголовок перед сообщением об отсутствии решения
+                no_solution_title = f"*{i18n.gettext('Найденные ошибки и рекомендации по ремонту:', locale=user.lang)}*"
+                no_solution_message = i18n.gettext('Решение не найдено в базе знаний. Проверьте информацию выше.', locale=user.lang)
+                final_response_text = f"{output_header}\n\n{no_solution_title}\n{no_solution_message}"
+                logging.warning(f"Финальное решение не найдено для {path}")
 
-        final_response_text = output_header + solution_part
-        logging.info("Финальный текст ответа сформирован.")
+            # --- Списание Токена / Обновление Подписки ---
+            # ИЗМЕНЕНО: Переносим логику списания/подписки ВНУТРЬ условия `if solution_found_in_excel`
+            token_spent_message = ""
+            
+            if solution_found_in_excel: # <--- НОВОЕ УСЛОВИЕ
+                if analysis_result == "paid":
+                     # Списываем 1 токен
+                     deducted = await orm.user_repo.deduct_token(user.user_id)
+                     if deducted:
+                          logging.info(f"Успешно списан 1 токен у пользователя {user.user_id} за crash_key {crash_key}, т.к. решение найдено.")
+                          new_token_balance = await orm.user_repo.get_token_balance(user.user_id)
+                          token_spent_message = i18n.gettext("\n\nСписан 1 токен (остаток: {balance}). ", locale=user.lang).format(balance=new_token_balance)
+                          
+                          # Создаем или обновляем подписку (если ее не было или она истекла)
+                          if not is_subscription_active_and_valid:
+                               subscription_start_date = datetime.now()
+                               subscription_end_date = subscription_start_date + timedelta(days=30)
+                               sub_created = await orm.subscription_repo.create_or_reset_subscription(
+                                    user_id=user.user_id,
+                                    crash_key=crash_key,
+                                    start_date=subscription_start_date,
+                                    end_date=subscription_end_date
+                               )
+                               if sub_created:
+                                    logging.info(f"Создана/обновлена подписка для user {user.user_id}, crash_key {crash_key}.")
+                                    token_spent_message += i18n.gettext("Запущен 30-дневный период: следующие 9 анализов для **этого устройства** будут бесплатными.", locale=user.lang)
+                               else:
+                                    logging.error(f"Не удалось создать/обновить подписку для user {user.user_id}, crash_key {crash_key}.")
+                     else:
+                          logging.error(f"Не удалось списать токен у user {user.user_id}, хотя проверка баланса прошла и решение найдено.")
+                          token_spent_message = i18n.gettext("\n\nОшибка при списании токена.", locale=user.lang)
+            
+            elif analysis_result == "free_sub": 
+                 # Увеличиваем счетчик бесплатного анализа
+                 updated = await orm.subscription_repo.increment_analysis_count(user.user_id, crash_key)
+                 if updated:
+                      analyses_done = (subscription.analysis_count if subscription else 0) + 1
+                      logging.info(f"Успешно увеличен счетчик анализов для user {user.user_id}, crash_key {crash_key}. Счетчик: {analyses_done}/10.")
+                      token_spent_message = i18n.gettext("\n\nАнализ проведен бесплатно по подписке ({count}/10 для этого устройства).", locale=user.lang).format(count=analyses_done)
+        else:
+                      logging.error(f"Не удалось увеличить счетчик анализов для user {user.user_id}, crash_key {crash_key}.")
+                      token_spent_message = i18n.gettext("\n\nОшибка при обновлении счетчика бесплатных анализов.", locale=user.lang)
+            
+            elif analysis_result != 'no_tokens': 
+                # TODO: i18n: Localize no solution no token spent message
+                token_spent_message = i18n.gettext("\n\nТокен **не списан**, т.к. готовое решение не найдено в базе.", locale=user.lang)
+                logging.info(f"Токен не списан для user {user.user_id}, crash_key {crash_key}, т.к. решение не найдено в Excel.")
+
+            # --- Отправка финального ответа ---
+            # Добавляем информацию о токене/подписке с отступом
+            if token_spent_message:
+                final_response_text += f"\n\n{token_spent_message.strip()}"
+            
+            response_parts = split_message(final_response_text)
+            for part in response_parts:
+                # Указываем parse_mode="Markdown" для обработки звездочек
+                await message.answer(part, parse_mode="Markdown") 
+            logging.info(f"Финальный текст ответа сформирован.")
 
     except Exception as e:
-        logging.error(f"Критическая ошибка в document_analyze: {e}", exc_info=True)
-        final_response_text = i18n.gettext("Произошла непредвиденная ошибка при анализе файла.", locale=user.lang)
-        # Попытаемся отправить хоть какое-то сообщение об ошибке
-        try:
-            await message.answer(final_response_text)
-        except Exception as send_error:
-             logging.error(f"Не удалось даже отправить сообщение об ошибке: {send_error}")
+            logging.exception(f"Общая ошибка в document_analyze для user {message.from_user.id} (внутри семафора)")
+            # TODO: i18n: Localize generic error message
+            try:
+                await message.answer(i18n.gettext("Произошла непредвиденная ошибка при анализе файла.", locale=user.lang))
+            except Exception as send_err:
+                 logging.error(f"Не удалось отправить сообщение об ошибке пользователю {message.from_user.id}: {send_err}")
+            # Сообщение о несписании токена здесь может быть неточным, т.к. ошибка могла случиться до проверки баланса
 
     finally:
-        # Отправляем результат (даже если это сообщение об ошибке, сформированное в except)
-        if final_response_text:
-            parts = split_message(final_response_text)
-            for part in parts:
-                await message.answer(part, parse_mode="Markdown") # Используем Markdown
-
-        # Удаляем временный файл
+            # --- Очистка временного файла ---
         if path and os.path.exists(path):
             try:
                 os.remove(path)
                 logging.info(f"Временный файл {path} удален.")
-            except Exception as e:
+                except OSError as e:
                 logging.error(f"Ошибка удаления временного файла {path}: {e}")
 
 async def notify_no_funds(message: Message, orm: ORM):
