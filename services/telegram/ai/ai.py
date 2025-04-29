@@ -9,6 +9,8 @@ from config import Environ # Импортируем класс Environ
 import base64 # Добавлен импорт для analyze_image
 import time
 from services.analyzer.analyzer import LogAnalyzer
+import os
+import openai
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -295,3 +297,112 @@ async def analyze_file_with_ai(panic_string: str, db_solution: str = None, langu
     except Exception as e:
         logging.error(f"Unexpected error in analyze_file_with_ai using GeminiAI class: {str(e)}", exc_info=True)
         return f"Internal error processing AI request: {str(e)}" if language == 'en' else f"Внутренняя ошибка при обработке запроса ИИ: {str(e)}"
+
+# --- Новая функция для анализа лога через OpenAI ---
+async def analyze_log_via_ai(log_content: str, known_error_codes: List[str]) -> Optional[Dict[str, Optional[str]]]:
+    """
+    Анализирует полный лог с помощью OpenAI (GPT-4o) для извлечения
+    информации об устройстве и определения наиболее релевантного кода ошибки.
+
+    Args:
+        log_content: Полное содержимое файла лога.
+        known_error_codes: Список известных кодов ошибок для выбора.
+
+    Returns:
+        Словарь с ключами "product", "os_version", "timestamp", "error_code"
+        или None при ошибке. Значения могут быть None, если информация не найдена.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        logger.error("OPENAI_API_KEY не найден для analyze_log_via_ai.")
+        return None
+
+    # Ограничиваем длину для API
+    max_length = 30000 # Лимит для gpt-4o можно увеличить, но 30к должно хватить для большинства логов
+    log_content_short = log_content[:max_length]
+    if len(log_content) > max_length:
+        logger.warning(f"Лог слишком длинный ({len(log_content)}), обрезается до {max_length} для OpenAI.")
+
+    codes_list_str = "\n".join(known_error_codes)
+
+    system_prompt = f"""Твоя задача - внимательно проанализировать предоставленный лог сбоя iOS.
+Извлеки следующую информацию:
+1.  **Идентификатор продукта (product):** Найди значение ключа \"product\", \"hardwaremodel\" или аналогичного (например, \"iPhone11,2\", \"iPad8,1\"). Если не найдено, верни null.
+2.  **Версия ОС (os_version):** Найди версию ОС, обычно указанную в \"os_version\" (например, \"iPhone OS 17.5.1 (21F90)\"). Если не найдено, верни null.
+3.  **Временная метка (timestamp):** Найди дату и время сбоя из ключа \"timestamp\" или \"date\" (например, \"2024-07-27 22:27:33.26 -0700\"). Верни ТОЛЬКО дату и время в формате YYYY-MM-DD HH:MM:SS, отбросив миллисекунды и часовой пояс. Если не найдено, верни null.
+4.  **Код ошибки (error_code):** Проанализируй основную причину сбоя, указанную в логе (особенно в \"panicString\"). Выбери ОДИН наиболее подходящий код/фразу из списка ниже, который ТОЧНО соответствует этой причине.
+
+**СПИСОК ДОПУСТИМЫХ КОДОВ/ФРАЗ (выбери ТОЛЬКО ОДИН):**
+{codes_list_str}
+
+**ПРАВИЛА ФОРМАТИРОВАНИЯ ОТВЕТА:**
+- Верни ТОЛЬКО валидный JSON объект.
+- JSON объект должен содержать ТОЛЬКО ключи: \"product\", \"os_version\", \"timestamp\", \"error_code\".
+- Значения для ключей должны быть строками или null, если информация не найдена.
+- Для \"error_code\" используй ТОЧНОЕ написание кода/фразы из предоставленного списка. НЕ добавляй ничего лишнего.
+
+Пример идеального ответа:
+{{
+  \"product\": \"iPhone11,2\",
+  \"os_version\": \"iPhone OS 17.5.1 (21F90)\",
+  \"timestamp\": \"2024-07-27 22:27:33\",
+  \"error_code\": \"i2c3\"
+}}
+Пример, если что-то не найдено:
+{{
+  \"product\": \"iPhone16,1\",
+  \"os_version\": null,
+  \"timestamp\": \"2024-12-01 10:30:00\",
+  \"error_code\": \"ApplePMGR\"
+}}
+"""
+
+    user_prompt = f"**Лог сбоя iOS:**\n```\n{log_content_short}\n```\n\n**JSON результат:**"
+
+    logger.info(f"Запрос анализа лога у OpenAI (модель gpt-4o)...")
+    try:
+        # TODO: Consider using an async client if this function is always awaited
+        client = openai.OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            response_format={"type": "json_object"}, # Request JSON output
+            temperature=0.0,
+            timeout=60 # Increased timeout
+        )
+        ai_response_raw = response.choices[0].message.content.strip()
+        logger.info(f"Ответ от OpenAI (raw JSON): {ai_response_raw}")
+
+        # Attempt to parse JSON
+        try:
+            ai_result = json.loads(ai_response_raw)
+            # Validate keys (could add stricter type checking)
+            required_keys = {"product", "os_version", "timestamp", "error_code"}
+            if not all(key in ai_result for key in required_keys):
+                 logger.error(f"Ответ OpenAI JSON не содержит всех нужных ключей: {ai_result}")
+                 return None
+            # Check if the chosen error_code is in the known list (just in case)
+            if ai_result.get("error_code") and ai_result["error_code"].lower() not in {c.lower() for c in known_error_codes}:
+                 logger.warning(f"Код ошибки '{ai_result['error_code']}' от AI не найден в списке известных кодов!")
+                 # Option: return None, leave as is, or find closest match.
+                 # Leaving as is for now, but logged.
+            return ai_result
+        except json.JSONDecodeError as e:
+            logger.error(f"Не удалось распарсить JSON ответ от OpenAI: {e}. Ответ: {ai_response_raw}")
+            return None
+
+    except openai.Timeout as e:
+         logger.error(f"OpenAI Ошибка API (анализ лога): Превышен таймаут - {e}")
+         return None
+    except openai.APIError as e:
+        logger.error(f"OpenAI Ошибка API (анализ лога): {e}", exc_info=False)
+        return None
+    except openai.RateLimitError as e:
+         logger.error(f"OpenAI Ошибка API (анализ лога): Превышен лимит запросов - {e}")
+         return None
+    except Exception as e:
+        logger.error(f"Непредвиденная ошибка при вызове OpenAI API (анализ лога): {e}", exc_info=True)
+        return None

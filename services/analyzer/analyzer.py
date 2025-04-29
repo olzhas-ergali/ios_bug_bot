@@ -10,34 +10,135 @@ from difflib import get_close_matches, SequenceMatcher
 from openpyxl.utils import get_column_letter
 from PIL import Image
 import pytesseract
-import google.generativeai as genai
-from google.api_core import exceptions as google_exceptions # Добавлен импорт для обработки ошибок API
-# import openai # Убираем импорт OpenAI
+# import google.generativeai as genai # Убрано
+from google.api_core import exceptions as google_exceptions # Оставляем для возможных будущих ошибок
+# import openai # Убрано, клиент OpenAI больше не нужен здесь
+from datetime import datetime
 
-# --- СПИСОК ИЗВЕСТНЫХ КОДОВ ОШИБОК (очищенный) ---
+# --- Функция для очистки строк с пробелами (перенесена сюда) ---
+def clean_spaced_string(s):
+    return re.sub(r"\s+", "", s)
+
+# --- Улучшенная функция безопасного парсинга JSON ---
+def parse_json_safely(text):
+    if isinstance(text, dict):
+        return text
+    if not isinstance(text, str):
+        try:
+            # Try to dump non-string input to string first
+            text = json.dumps(text)
+        except Exception:
+            logging.error("Failed to convert non-string input to JSON string in parse_json_safely.")
+            return {"panicString": str(text)} # Return original as string value
+
+    merged_data = {}
+    found_json = False
+    # Regex to find {...} pairs, handling nested braces and basic string escaping
+    # This regex is basic and might fail on complex nested structures or escaped braces within strings.
+    json_candidates = re.findall(r'(\{((?:[^{}]|\{[^{}]*\}|\"(?:\\.|[^\\"])*\")*)\})', text)
+
+    logging.info(f"Found {len(json_candidates)} potential JSON objects in parse_json_safely.")
+
+    for candidate_tuple in json_candidates:
+        candidate_str = candidate_tuple[0] # The full match including outer braces
+        try:
+            # Attempt to remove potential trailing commas before closing brace/bracket
+            candidate_str_fixed = re.sub(r'\s*,(\s*[}\]])', r'\1', candidate_str)
+            data = json.loads(candidate_str_fixed)
+            if isinstance(data, dict):
+                merged_data.update(data) # Merge dictionaries, later keys overwrite earlier ones
+                found_json = True
+                logging.info(f"Successfully parsed and merged JSON object: {list(data.keys())[:5]}...") # Log first few keys
+            else:
+                logging.warning(f"Parsed JSON candidate is not a dictionary: {type(data)}")
+        except json.JSONDecodeError as e:
+            logging.warning(f"Failed to parse JSON candidate in parse_json_safely: {e}. Candidate start: {candidate_str[:100]}...")
+        except Exception as e:
+            logging.error(f"Unexpected error parsing JSON candidate in parse_json_safely: {e}")
+
+    if found_json:
+            logging.info("Successfully merged one or more JSON objects.")
+            # Ensure panicString is present, using the raw text as fallback if needed
+            # Check case-insensitively
+            has_panic_key = any(key.lower() == 'panicstring' for key in merged_data.keys())
+            if not has_panic_key:
+                logging.warning("Merged JSON does not contain 'panicString'. Adding raw text as fallback.")
+                merged_data['panicString'] = text # Add the original text if key is missing
+            return merged_data
+    else:
+            logging.warning("Could not parse any valid JSON object. Falling back to structured data or raw text.")
+            # Fallback: try parsing line by line as key-value
+            try:
+                structured_data = {}
+                lines = text.splitlines()
+                for line in lines:
+                    if ":" in line:
+                        parts = line.split(":", 1)
+                        key = parts[0].strip()
+                        value = parts[1].strip()
+                        # Basic validation to avoid adding noise
+                        if key and value and len(key) < 100 and not key.startswith(" "):
+                            structured_data[key] = value
+                if structured_data:
+                    logging.info("Fallback successful: Parsed key-value pairs.")
+                    # Ensure panicString is present (case-insensitive check)
+                    has_panic_key = any(key.lower() == 'panicstring' for key in structured_data.keys())
+                    if not has_panic_key:
+                        structured_data['panicString'] = text
+                    return structured_data
+                else:
+                    logging.warning("Fallback failed: No key-value pairs found. Returning raw text.")
+                    return {"panicString": text}
+            except Exception as e:
+                logging.error(f"Error in key-value fallback parsing: {e}")
+                return {"panicString": text}
+
+# --- СПИСОК ИЗВЕСТНЫХ КОДОВ ОШИБОК (ОБНОВЛЕННЫЙ) ---
 KNOWN_ERROR_CODES = [
     "apcie[0:s3e]",
+    "nvme", # Добавлено
     "ANS2 Recoverable Panic",
     "ANS2 DATA ABORT",
+    "bluetooth-pcie mini", # Добавлено
+    "bluetooth-pcie", # Добавлено
+    "AppleBCMWLAN mini", # Добавлено
     "AppleBCMWLAN",
+    "apcie[0:wlan] mini", # Добавлено
     "apcie[0:wlan]",
+    "apcie[1:wlan] mini", # Добавлено
     "apcie[1:wlan]",
+    "apcie[2:wlan] mini", # Добавлено
     "apcie[2:wlan]",
+    "apcie[3:wlan] mini", # Добавлено
     "apcie[3:wlan]",
+    "AppleBaseband mini", # Добавлено
     "AppleBaseband",
+    "baseband-pcie mini", # Добавлено
     "baseband-pcie",
+    "AppleCS42L75Audio mini", # Добавлено
     "AppleCS42L75Audio",
+    "AppleCS42L77Audio mini", # Добавлено
     "AppleCS42L77Audio",
+    "SEP Memory Protection Module error mini", # Добавлено
     "SEP Memory Protection Module error",
+    "AppleOLYHAL mini", # Добавлено
+    "AppleOLYHAL", # Добавлено
+    "AppleOLYHALPortInterfacePCIe mini", # Добавлено
     "AppleOLYHALPortInterfacePCIe",
+    "port enable failed: mini", # Добавлено
     "port enable failed:",
     "ApplePMGR",
+    "BMSTask", # Добавлено
+    "Missing sensor(s): TG0B mini", # Добавлено
     "Missing sensor(s): TG0B",
+    "0x0, 0x400, mini", # Добавлено
     "0x0, 0x400,",
     "0x0, 0x800,",
     "0x0, 0x1000,",
     "0x0, 0x1800,",
     "0x0, 0x4000,",
+    "0x0, 0x4800,", # Добавлено
+    "0x0, 0x5000,", # Добавлено
     "0x0, 0x20000,",
     "0x0, 0x40000,",
     "0x0, 0x80000,",
@@ -49,18 +150,34 @@ KNOWN_ERROR_CODES = [
     "0x0, 0x300000,",
     "0x0, 0x400000,",
     "0x0, 0x500000,",
+    "0x0, 0x600000,", # Добавлено
+    "0x0, 0x700000,", # Добавлено
     "0x0, 0x40000000,",
     "0xa1, 0x0,",
-    "0x41, 0x0", # Убрана запятая в конце для консистентности
+    "0x41, 0x0",
     "0x0, 0xc0000,",
     "0x0, 0x1c0000,",
+    "is 169", # Добавлено
+    "524288", # Добавлено
+    "1048576", # Добавлено
+    "1572864", # Добавлено
+    "2097152", # Добавлено
+    "2621440", # Добавлено
+    "3145728", # Добавлено
+    "3670016", # Добавлено
+    "4194304", # Добавлено
     "AOP PANIC - [Eiger",
+    "AOP PANIC - SCMto:0 - prox mini", # Добавлено
     "AOP PANIC - SCMto:0 - prox",
+    "AOP PANIC - SCMto:1 - prox mini", # Добавлено
     "AOP PANIC - SCMto:1 - prox",
+    "Meru", # Добавлено
+    "nEiger", # Добавлено
     "AOP PANIC - No pulse on",
     "AOP PANIC - moly: bad data",
     "AOP PANIC - !pulse pearl@",
     "AOP PANIC - !pulse main@",
+    "Pressure queue blocked", # Добавлено
     "Missing sensor(s): Prs0",
     "Missing sensor(s): mic1",
     "Missing sensor(s): mic2",
@@ -78,18 +195,20 @@ KNOWN_ERROR_CODES = [
     "SOCD report detected",
     "AGXSecureGart",
     "Kernel data abort",
+    "AOP PREFETCH ABORT", # Добавлено
+    "AMCC PLANE2 MCC", # Добавлено
+    "AMCC PLANE0 MCC", # Добавлено
     "AppleSocHot: Hot Hot Hot",
     "AOP PANIC - SCMErr:0x0",
     "AOP PANIC - SCMto:",
-    "i2c0",
-    "i2c1",
-    "i2c2",
     "aop-spmi0",
     "aop-spmi1",
     "@PIODMA",
     "for device display-eeprom",
     "for device roswell",
     "@AppleSynopsysMIPIDSIController",
+    "apt firmware", # Добавлено
+    "IOMFB", # Добавлено
     "IOMFB int_handler",
     "Can't find valid timing element for display",
     "DCP PANIC - ASSERT",
@@ -99,246 +218,137 @@ KNOWN_ERROR_CODES = [
     "DCP PANIC - IOMFB",
     "MTP DATA ABORT",
     "MTP PANIC",
-    "SIGNAL, code 6\nservice:", # Экранируем \n
+    "SIGNAL, code 6", # Убрано \nservice:
     "userspace watchdog timeout: no successful checkins from SpringBoard",
     "userspace watchdog timeout: no successful checkins from wifid since wake",
     "userspace watchdog timeout: no successful checkins from logd in 180",
+    "userspace watchdog timeout: no successful checkins from backboardd", # Добавлено
     "Port-Lightning",
     "AppleKraken:",
     "AppleHydra:",
     "AppleTriStar2",
-    "smc-charger"
+    "smc-charger",
+    "smc-orion-charger", # Добавлено
+    "i2c0",
+    "i2c1",
+    "i2c2",
+    "i2c3" # Добавлено
 ]
 KNOWN_ERROR_CODES_LOWER = {code.lower() for code in KNOWN_ERROR_CODES} # Для быстрой проверки ответа ИИ
 
-# --- Конец списка ---
+# --- СЛОВАРЬ ИДЕНТИФИКАТОРОВ МОДЕЛЕЙ ---
+KNOWN_MODEL_IDENTIFIERS = {
+    "iphone17,2": "iPhone 16 Pro Max",
+    "iphone17,1": "iPhone 16 Pro",
+    "iphone17,4": "iPhone 16 Plus",
+    "iphone17,3": "iPhone 16",
+    "iphone16,2": "iPhone 15 Pro Max",
+    "iphone16,1": "iPhone 15 Pro",
+    "iphone15,5": "iPhone 15 Plus",
+    "iphone15,4": "iPhone 15",
+    "iphone15,3": "iPhone 14 Pro Max",
+    "iphone15,2": "iPhone 14 Pro",
+    "iphone14,8": "iPhone 14 Plus",
+    "iphone14,7": "iPhone 14",
+    "iphone14,6": "iPhone SE (3-го поколения)",
+    "iphone14,3": "iPhone 13 Pro Max",
+    "iphone14,2": "iPhone 13 Pro",
+    "iphone14,5": "iPhone 13",
+    "iphone14,4": "iPhone 13 mini",
+    "iphone13,4": "iPhone 12 Pro Max",
+    "iphone13,3": "iPhone 12 Pro",
+    "iphone13,2": "iPhone 12",
+    "iphone13,1": "iPhone 12 mini",
+    "iphone12,5": "iPhone 11 Pro Max",
+    "iphone12,3": "iPhone 11 Pro",
+    "iphone12,8": "iPhone SE (2-го поколения)",
+    "iphone12,1": "iPhone 11",
+    "iphone11,6": "iPhone Xs Max",
+    "iphone11,4": "iPhone Xs Max (China)",
+    "iphone11,2": "iPhone Xs",
+    "iphone11,8": "iPhone XR",
+    "iphone10,3": "iPhone X (Global)",
+    "iphone10,6": "iPhone X (GSM)",
+    "iphone10,5": "iPhone 8 Plus (GSM)",
+    "iphone10,2": "iPhone 8 Plus (Global)",
+    "iphone10,4": "iPhone 8 (GSM)",
+    "iphone10,1": "iPhone 8 (Global)",
+    "iphone9,4": "iPhone 7 Plus (GSM)",
+    "iphone9,2": "iPhone 7 Plus (Global)",
+    "iphone9,3": "iPhone 7 (GSM)",
+    "iphone9,1": "iPhone 7 (Global)",
+    "iphone8,2": "iPhone 6s Plus",
+    "iphone8,1": "iPhone 6s",
+    "iphone8,4": "iPhone SE (1-го поколения)",
+    "ipad4,1": "iPad Air (WiFi)",
+    "ipad4,2": "iPad Air (Cellular)",
+    "ipad4,3": "iPad Air (China)",
+    "ipad4,6": "iPad mini 2 (China)",
+    "ipad4,7": "iPad mini 3 (WiFi)",
+    "ipad4,8": "iPad mini 3 (Cellular)",
+    "ipad4,9": "iPad mini 3 (China)",
+    "ipad5,3": "iPad Air 2 (WiFi)",
+    "ipad5,4": "iPad Air 2 (Cellular)",
+    "ipad5,1": "iPad mini 4 (WiFi)",
+    "ipad5,2": "iPad mini 4 (Cellular)",
+    "ipad6,7": "iPad Pro 12.9-inch (WiFi)",
+    "ipad6,8": "iPad Pro 12.9-inch (Cellular)",
+    "ipad6,4": "iPad Pro 9.7-inch (Cellular)",
+    "ipad6,3": "iPad Pro 9.7-inch (WiFi)",
+    "ipad6,11": "iPad 5 (WiFi)",
+    "ipad6,12": "iPad 5 (Cellular)",
+    "ipad7,2": "iPad Pro 2 (12.9-inch, Cellular)",
+    "ipad7,4": "iPad Pro (10.5-inch, Cellular)",
+    "ipad7,3": "iPad Pro (10.5-inch, WiFi)",
+    "ipad7,1": "iPad Pro 2 (12.9-inch, WiFi)",
+    "ipad14,3": "iPad Pro (11-inch, WiFi) (4th generation)"
+}
+# --- Конец словаря ---
+
+# --- Конец списков ---
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-def preprocess_log_content(text):
-    text = re.sub(r'<0x[0-9A-Fa-f]+>', '', text)
-    
-    json_candidates = re.findall(r'\{.*?\}', text, re.DOTALL)
-    if json_candidates:
-        best_candidate_with_panic = None
-        largest_valid_candidate = None
-        max_len = -1
-
-        for candidate in json_candidates:
-            try:
-                data = json.loads(candidate)
-                if isinstance(data, dict):
-                    has_panic_key = any(key.lower() == 'panicstring' for key in data.keys())
-
-                    if has_panic_key:
-                        best_candidate_with_panic = candidate
-                        logging.info("Найден JSON-кандидат с ключом 'panicString'.")
-                        break
-
-                    if len(candidate) > max_len:
-                        max_len = len(candidate)
-                        largest_valid_candidate = candidate
-
-            except json.JSONDecodeError:
-                continue
-
-        if best_candidate_with_panic:
-            logging.info("Выбран JSON-кандидат с ключом 'panicString'.")
-            return best_candidate_with_panic
-        elif largest_valid_candidate:
-            logging.info(f"Выбран самый большой валидный JSON-кандидат (длина: {max_len}).")
-            return largest_valid_candidate
-    
-    lines = text.split("\n")
-    structured_data = {}
-    for line in lines:
-        if ":" in line:
-            parts = line.split(":", 1)
-            key = parts[0].strip()
-            value = parts[1].strip()
-            structured_data[key] = value
-    
-    if structured_data:
-        try:
-            logging.info("JSON не найден/выбран, собраны данные из пар ключ:значение.")
-            return json.dumps(structured_data)
-        except:
-            pass
-    
-    logging.info("JSON не найден/выбран, данные ключ:значение не собраны. Возвращается исходный текст.")
-    return text 
-
-def fix_json_structure(text):
-    if not text:
-        return {}
-        
-    if isinstance(text, dict):
-        return text
-        
-    if not isinstance(text, str):
-        try:
-            return json.loads(json.dumps(text))
-        except:
-            return {}
-    
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        try:
-            text = re.sub(r'\s+', ' ', text).strip()
-            text = re.sub(r'([{\[])\s*"', r'\1"', text)
-            text = re.sub(r':\s*"([^"]+)"\s*([,}])', r':"\1"\2', text)
-            text = re.sub(r',\s*}', '}', text)
-            return json.loads(text)
-        except:
-            try:
-                structured_data = {}
-                lines = text.splitlines()
-                for line in lines:
-                    if ":" in line:
-                        parts = line.split(":", 1)
-                        key = parts[0].strip()
-                        value = parts[1].strip()
-                        structured_data[key] = value
-                return structured_data if structured_data else {}
-            except:
-                return {"panicString": text}  # Сохраняем весь текст как panicString
-
-def clean_json_text(text):
-    if not isinstance(text, str):
-        return json.dumps(text) if hasattr(text, "__iter__") else "{}"
-    
-    text = re.sub(r'\s+', ' ', text)  
-    text = re.sub(r'"\s*([a-zA-Z0-9_]+)\s*"\s*:', r'"\1":', text)  
-    text = re.sub(r':\s*"([^"]+)"\s*', r': "\1"', text)  
-    text = text.replace('}{', '},{') 
-    
-    # Проверяем, является ли текст объектом или массивом
-    if text.startswith('{') and text.endswith('}'):
-        return text
-    elif not (text.startswith('[') and text.endswith(']')):
-        text = f'[{text}]'
-    
-    return text
-
-def parse_json_safely(text):
-    if isinstance(text, dict):
-        return text
-        
-    try:
-        cleaned_text = clean_json_text(text)
-        data = json.loads(cleaned_text)
-        if isinstance(data, list):
-            return data[0] if data else {}
-        return data
-    except json.JSONDecodeError as e:
-        logging.error(f"Ошибка JSON: {e}")
-        try:
-            structured_data = {}
-            lines = text.splitlines()
-            for line in lines:
-                if ":" in line:
-                    parts = line.split(":", 1)
-                    key = parts[0].strip()
-                    value = parts[1].strip()
-                    structured_data[key] = value
-            return structured_data if structured_data else {"panicString": text}
-        except:
-            return {"panicString": text}
-
 class LogAnalyzer:
-    def __init__(self, lang, path=None, username=None, tesseract_path=None):
+    # Simplified __init__ to only load Excel sheets based on language
+    def __init__(self, lang):
         self.panic_sheet = None
         self.nand_sheet = None
-        self.gemini_model = None # Атрибут для модели Gemini
-        # self.openai_client = None # Убираем атрибут для клиента OpenAI
+        self.lang = lang
+        logging.info(f"Initializing LogAnalyzer for language: {lang}")
 
-        # --- Настройка Gemini API ---
-        try:
-            gemini_api_key = os.getenv("GEMINI_API_KEY")
-            if gemini_api_key:
-                genai.configure(api_key=gemini_api_key)
-                self.gemini_model = genai.GenerativeModel('gemini-1.5-flash-latest')
-                logging.info("Gemini API клиент успешно настроен (gemini-1.5-flash-latest).")
-            else:
-                logging.warning("Переменная окружения GEMINI_API_KEY не установлена. Анализ Gemini будет недоступен.")
-        except Exception as e:
-            logging.error(f"Ошибка инициализации Gemini API: {e}")
-        # --- Конец настройки Gemini API ---
-
-        # --- Убираем настройку OpenAI API ---
-        # try:
-        #     openai_api_key = os.getenv("OPENAI_API_KEY")
-        #     # ... (код инициализации OpenAI удален) ...
-        # except Exception as e:
-        #     logging.error(f"Ошибка инициализации OpenAI API: {e}")
-        #     self.openai_client = None
-        # --- Конец настройки OpenAI API ---
-
-        # Загружаем panic_codes.xlsx
+        # Load panic_codes.xlsx
         try:
             panic_workbook = openpyxl.load_workbook("./data/panic_codes.xlsx")
             try:
-                 self.panic_sheet = panic_workbook[lang]
-                 logging.info(f"Загружен лист '{lang}' из panic_codes.xlsx")
+                self.panic_sheet = panic_workbook[lang]
+                logging.info(f"Loaded sheet '{lang}' from panic_codes.xlsx")
             except KeyError:
-                 self.panic_sheet = panic_workbook.active
-                 logging.warning(f"Лист '{lang}' не найден в panic_codes.xlsx, используется активный лист: '{self.panic_sheet.title}'")
+                self.panic_sheet = panic_workbook.active
+                logging.warning(f"Sheet '{lang}' not found in panic_codes.xlsx, using active sheet: '{self.panic_sheet.title}'")
         except FileNotFoundError:
-            logging.error("Файл ./data/panic_codes.xlsx не найден!")
+            logging.error("File ./data/panic_codes.xlsx not found!")
         except Exception as e:
-            logging.error(f"Ошибка загрузки panic_codes.xlsx: {e}")
+            logging.error(f"Error loading panic_codes.xlsx: {e}")
 
-        # Загружаем nand_list.xlsx
+        # Load nand_list.xlsx
         try:
             nand_workbook = openpyxl.load_workbook("./data/nand_list.xlsx")
             try:
-                 self.nand_sheet = nand_workbook[lang]
-                 logging.info(f"Загружен лист '{lang}' из nand_list.xlsx")
+                self.nand_sheet = nand_workbook[lang]
+                logging.info(f"Loaded sheet '{lang}' from nand_list.xlsx")
             except KeyError:
-                 self.nand_sheet = nand_workbook.active
-                 logging.warning(f"Лист '{lang}' не найден в nand_list.xlsx, используется активный лист: '{self.nand_sheet.title}'")
+                self.nand_sheet = nand_workbook.active
+                logging.warning(f"Sheet '{lang}' not found in nand_list.xlsx, using active sheet: '{self.nand_sheet.title}'")
         except FileNotFoundError:
-            logging.warning("Файл ./data/nand_list.xlsx не найден! Поиск по нему будет невозможен.")
+            logging.warning("File ./data/nand_list.xlsx not found! Search will not be possible.")
         except Exception as e:
-            logging.error(f"Ошибка загрузки nand_list.xlsx: {e}")
-            
-        self.path = path
-        self.username = username
-        self.log = ""
-        self.log_dict = {}
+            logging.error(f"Error loading nand_list.xlsx: {e}")
 
-        if path is not None:
-            self.log = self._process_file(path, tesseract_path)
-            if self.log:
-                # Используем безопасное парсинг JSON сразу
-                self.log_dict = parse_json_safely(self.log)
-                # Если парсинг не удался или нет panicString, пытаемся извлечь
-                if not isinstance(self.log_dict, dict) or "panicstring" not in {k.lower() for k in self.log_dict.keys()}:
-                    _, _, extracted_panic = self.extract_product_info()
-                    if "panicString" not in self.log_dict and extracted_panic:
-                         self.log_dict["panicString"] = extracted_panic
-                    elif "panicString" not in self.log_dict:
-                         # Добавляем правильный отступ
-                         self.log_dict["panicString"] = self.log
-
-    def _process_file(self, path, tesseract_path):
-        """Определяет тип файла и обрабатывает его соответствующим образом."""
-        if not os.path.exists(path):
-            logging.error(f"Файл не найден: {path}")
-            return ""
-            
-        if path.endswith(('.ips', '.txt', '.json')):
-            return self._read_log_file(path)
-        elif path.endswith(('.png', '.jpg', '.jpeg')):
-            return self._read_photo(path, tesseract_path)
-        else:
-            logging.warning(f"Неподдерживаемый формат файла: {path}")
-            return ""
-
+    # Keep _read_log_file as a static method
     @staticmethod
     def _read_log_file(path):
-        """Читает файл с автоопределением кодировки"""
+        """Reads a file with automatic encoding detection"""
         try:
             with open(path, 'rb') as f:
                 raw_data = f.read()
@@ -355,8 +365,10 @@ class LogAnalyzer:
             logging.error(f"Ошибка чтения файла {path}: {e}")
             return ""
 
+    # Keep _read_photo as a static method
     @staticmethod
     def _read_photo(path, tesseract_path):
+        """Processes an image file using Tesseract OCR"""
         try:
             img = Image.open(path)
             if tesseract_path:
@@ -366,381 +378,76 @@ class LogAnalyzer:
             logging.error(f"Ошибка обработки изображения {path}: {e}")
             return ""
 
-    def extract_product_info(self):
-        """Извлекает модель/платформу, ключ и panic_string из лога."""
-        model = "Неизвестно"
-        crash_key = None
-        panic_string_value = ""
-        log_dict_cleaned_keys = {}
-
-        try:
-            # --- Предварительная обработка: получаем словарь с очищенными ключами ---
-            if isinstance(self.log_dict, dict):
-                 log_dict_cleaned_keys = { re.sub(r'\s+', '', str(k)).lower(): v for k, v in self.log_dict.items() } # Приводим ключи к строке перед очисткой
-                 logging.info(f"Очищенные ключи из log_dict: {list(log_dict_cleaned_keys.keys())}")
-            else:
-                 # Пытаемся исправить структуру, если это не словарь
-                 corrected_dict = fix_json_structure(self.log)
-                 if isinstance(corrected_dict, dict):
-                      self.log_dict = corrected_dict
-                      log_dict_cleaned_keys = { re.sub(r'\s+', '', str(k)).lower(): v for k, v in self.log_dict.items() }
-                      logging.info(f"Очищенные ключи из log_dict (после исправления): {list(log_dict_cleaned_keys.keys())}")
-                 else:
-                      logging.warning("log_dict не является словарем и не может быть исправлен, поиск по ключам невозможен.")
-                      # В этом случае panicString должен быть всем логом
-                      panic_string_value = self.log or ""
-
-            # --- 1. Поиск идентификатора платформы (product) ---
-            product_keys_to_check = ["product", "hardwaremodel", "model", "device"]
-            found_product = None
-
-            # Шаг 1.1: Ищем в "верхнем" словаре
-            for key in product_keys_to_check:
-                if key in log_dict_cleaned_keys:
-                    value = str(log_dict_cleaned_keys[key] or "").strip()
-                    if value:
-                        found_product = value
-                        logging.info(f"Найден идентификатор платформы по верхнему ключу '{key}': {found_product}")
-                        break
-
-            # Шаг 1.2: Если не нашли, пытаемся парсить значение panicstring как JSON (если panicstring есть)
-            if not found_product and 'panicstring' in log_dict_cleaned_keys:
-                panic_string_content = str(log_dict_cleaned_keys['panicstring'] or "")
-                # Очищаем panic_string_content от пробелов МЕЖДУ символами
-                cleaned_panic_json_str = panic_string_content
-                if re.search(r'\b[a-zA-Z] [a-zA-Z]\b', cleaned_panic_json_str) or re.search(r'" : "', cleaned_panic_json_str):
-                    logging.info("Обнаружены пробелы в значении panicstring, применяем очистку...")
-                    original_length = len(cleaned_panic_json_str)
-                    cleaned_panic_json_str = re.sub(r'\s+(?=[^a-zA-Z0-9\s])|(?<=[^a-zA-Z0-9\s])\s+', '', cleaned_panic_json_str)
-                    cleaned_panic_json_str = re.sub(r'(?!\w)\s+(?=\w)|(?<=\w)\s+(?!\w)', '', cleaned_panic_json_str) 
-                    cleaned_panic_json_str = ' '.join(cleaned_panic_json_str.split())
-                    logging.info(f"Очищенная строка panicstring для JSON парсинга (было {original_length}, стало {len(cleaned_panic_json_str)}): {cleaned_panic_json_str[:200]}...")
-                else:
-                    logging.info("Пробелы в значении panicstring не обнаружены, очистка не применялась.")
-                    
-                # Пытаемся распарсить очищенную строку как JSON
-                try:
-                    # Добавим {} на случай если строка пустая или некорректная
-                    inner_data = json.loads(cleaned_panic_json_str or "{}") 
-                    if isinstance(inner_data, dict):
-                        logging.info(f"Успешно распарсили panicstring как JSON. Ключи: {list(inner_data.keys())}")
-                        # Ищем модель внутри этого вложенного словаря (case-insensitive)
-                        inner_data_lower_keys = {k.lower(): v for k, v in inner_data.items()}
-                        for key in product_keys_to_check:
-                            if key in inner_data_lower_keys:
-                                value = str(inner_data_lower_keys[key] or "").strip()
-                                if value:
-                                    found_product = value
-                                    logging.info(f"Найден идентификатор платформы по ключу '{key}' ВНУТРИ panicstring JSON: {found_product}")
-                                    break # Выходим из внутреннего цикла
-                        if found_product: 
-                             pass # Уже нашли, ничего не делаем
-                        else:
-                             logging.info("Ключи модели не найдены внутри panicstring JSON.")
-                    else:
-                         logging.warning("Распарсенный panicstring не является словарем.")
-                except json.JSONDecodeError as e:
-                    logging.warning(f"Не удалось распарсить очищенный panicstring как JSON: {e}. Строка (начало): {cleaned_panic_json_str[:200]}...")
-                except Exception as e:
-                     logging.error(f"Непредвиденная ошибка при парсинге panicstring JSON: {e}")
-
-            # Шаг 1.3: Fallback - ищем старым Regex в сыром тексте лога (если не нашли выше и лог есть)
-            if not found_product and self.log:
-                logging.info(f"Не найдено ни по ключам, ни в panicstring JSON. Поиск regex в self.log (с удалением пробелов)...")
-                try:
-                    # Создаем копию лога БЕЗ пробелов
-                    log_no_spaces = re.sub(r'\s+', '', self.log)
-                    # Ищем ПРОСТОЙ паттерн в тексте БЕЗ пробелов
-                    regex_pattern_simple = r'(iPhone\d+,\d+|iPad\d+,\d+|D\d+AP)'
-                    match = re.search(regex_pattern_simple, log_no_spaces, re.IGNORECASE)
-                    if match:
-                        # Найдено! Значение уже без пробелов.
-                        found_product = match.group(1) 
-                        logging.info(f"Найден идентификатор платформы простым regex в логе без пробелов: '{found_product}'")
-                    else:
-                        logging.info("Идентификатор платформы НЕ найден простым regex в логе без пробелов.")
-                except re.error as e:
-                    logging.error(f"Ошибка regex при поиске модели в логе без пробелов: {e}")
-            elif not self.log and not found_product:
-                 logging.warning("Не найдено ни одним способом, и self.log пуст.")
-
-            model = found_product if found_product else "Неизвестно"
-            
-            # --- 2. Поиск crashReporterKey (как раньше, по очищенному ключу) ---
-            crash_key = log_dict_cleaned_keys.get("crashreporterkey")
-            if crash_key:
-                 logging.info(f"Найден crashReporterKey: {crash_key}")
-
-            # --- 3. Извлечение panicString VALUE (без очистки здесь) ---
-            # Сначала ищем по ключу 'panicstring'
-            if 'panicstring' in log_dict_cleaned_keys:
-                 panic_string_value = str(log_dict_cleaned_keys['panicstring'] or "")
-                 logging.info(f"Извлечено ИСХОДНОЕ значение panicString из словаря: {panic_string_value[:100]}...")
-            # Если ключ не найден или значение пустое, И log есть, используем весь log
-            elif self.log and not panic_string_value:
-                 panic_string_value = self.log
-                 logging.warning("panicString не найден/пуст в словаре, используется весь текст лога.")
-            elif not self.log and not panic_string_value:
-                 logging.warning("panicString не найден/пуст и текст лога тоже пуст.")
-
-            # --- 4. Генерация crash_key (если не найден) ---
-            if not crash_key:
-                # Очищаем panic_string ПЕРЕД генерацией ключа
-                cleaned_key_source = panic_string_value
-                if cleaned_key_source and (re.search(r'\b[a-zA-Z] [a-zA-Z]\b', cleaned_key_source) or re.search(r'" : "', cleaned_key_source)):
-                    cleaned_key_source = re.sub(r'\s+(?=[^a-zA-Z0-9\s])|(?<=[^a-zA-Z0-9\s])\s+', '', cleaned_key_source)
-                    cleaned_key_source = re.sub(r'(?!\w)\s+(?=\w)|(?<=\w)\s+(?!\w)', '', cleaned_key_source) 
-                    cleaned_key_source = ' '.join(cleaned_key_source.split())
-                key_source = cleaned_key_source if cleaned_key_source else os.path.basename(self.path or "unknown_file")
-                crash_key = hashlib.md5(key_source.encode()).hexdigest()
-                logging.info(f"crashReporterKey не найден, сгенерирован хэш из panic/имени файла: {crash_key}")
-
-            model_cleaned = model.lower().strip().replace(" ", "")
-            
-            # Возвращаем извлеченный panic_string_value
-            return model_cleaned, crash_key, panic_string_value or ""
-
-        except Exception as e:
-            logging.error(f"Ошибка в extract_product_info: {e}", exc_info=True)
-            # В случае ошибки генерируем ключ и возвращаем дефолты
-            try:
-                 key_source = self.log or os.path.basename(self.path or "unknown_file")
-                 crash_key = hashlib.md5(key_source.encode()).hexdigest()
-            except Exception:
-                 crash_key = hashlib.md5(b"error_key").hexdigest()
-            return "неизвестно", crash_key, self.log or ""
-
-    # --- ФУНКЦИЯ ДЛЯ ВЫЗОВА GEMINI (Двухэтапная) ---
-    def _get_ai_error_code(self, panic_string):
+    # Keep _find_solution_by_code to search Excel sheets
+    def _find_solution_by_code(self, sheet, product_key, error_code_to_find):
         """
-        Определяет код ошибки из списка KNOWN_ERROR_CODES в два этапа:
-        1. Получает общее описание ошибки от Gemini.
-        2. Просим Gemini сопоставить это описание с кодом из KNOWN_ERROR_CODES.
-        Возвращает кортеж: (найденный_код, использовалась_ли_схожесть: bool)
+        Searches for an exact match of error_code_to_find in column 'A' of the sheet
+        and returns the solution for the given product_key.
+        Returns only the solution text or None.
         """
-        if not self.gemini_model:
-            logging.warning("Модель Gemini не инициализирована. Невозможно получить код ошибки.")
-            return None, False # Возвращаем кортеж
-        if not panic_string:
-            logging.warning("Пустая panic_string передана в _get_ai_error_code.")
-            return None, False # Возвращаем кортеж
-
-        max_length = 30000
-        panic_string_short = panic_string[:max_length]
-        if len(panic_string) > max_length:
-            logging.warning(f"Panic string слишком длинный ({len(panic_string)}), обрезается до {max_length} символов для Gemini.")
-
-        # --- Этап 1: Получаем описание ошибки от Gemini ---
-        prompt1_template = """Проанализируй следующий фрагмент лога сбоя iOS.
-Определи и кратко опиши ОСНОВНУЮ причину сбоя или ключевую фразу ошибки.
-Ответь только этой фразой/описанием, без лишних слов.
-
-**Фрагмент лога:**
-{log_fragment}
-"""
-        prompt1 = prompt1_template.format(log_fragment=panic_string_short)
-        logging.info("Этап 1: Запрос описания ошибки у Gemini...")
-        error_description = None
-        try:
-            response1 = self.gemini_model.generate_content(
-                prompt1,
-                generation_config=genai.types.GenerationConfig(temperature=0.1), # Чуть больше свободы для описания
-                request_options={'timeout': 30}
-            )
-            error_description = response1.text.strip()
-            logging.info(f"Этап 1: Ответ от Gemini (описание ошибки): '{error_description}'")
-            if not error_description:
-                 logging.warning("Этап 1: Gemini вернул пустое описание.")
-                 return None, False # Возвращаем кортеж
-
-        except google_exceptions.DeadlineExceeded:
-             logging.error("Этап 1 Gemini Ошибка API: Превышен таймаут.")
-             return None, False # Возвращаем кортеж
-        except Exception as e:
-            logging.error(f"Этап 1 Gemini Ошибка API: {e}", exc_info=False)
-            return None, False # Возвращаем кортеж
-        except BaseException as e:
-            logging.error(f"Этап 1 Gemini Критическая ошибка: {e}", exc_info=True)
-            raise # Перебрасываем критическую ошибку
-
-        # --- Этап 2: Просим Gemini сопоставить описание с кодом из списка ---
-        codes_list_str = "\n".join(KNOWN_ERROR_CODES)
-        prompt2_template = """Твоя ЗАДАЧА - сопоставить данное описание ошибки с ОДНИМ из кодов в предоставленном ниже списке.
-Ты ДОЛЖЕН выбрать НАИБОЛЕЕ ПОХОЖИЙ по смыслу код ТОЛЬКО ИЗ ЭТОГО СПИСКА.
-
-ВАЖНО:
-- Список содержит ВСЕ возможные варианты ответа.
-- Если ты считаешь, что ни один код из списка ТОЧНО не соответствует описанию, твоя ОБЯЗАННОСТЬ - все равно выбрать САМЫЙ БЛИЗКИЙ ПО СМЫСЛУ вариант из ПРЕДОСТАВЛЕННОГО списка.
-- Если ты совсем не уверен, какой код выбрать, выбери ЛЮБОЙ код из списка, который кажется ХОТЬ НЕМНОГО релевантным. Важно, чтобы ответ был из списка.
-- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО придумывать или возвращать код, которого НЕТ в списке ниже.
-
-**Список ДОПУСТИМЫХ кодов/фраз (выбери ОДИН из них):**
-{codes_list}
-
-**Описание ошибки для сопоставления:**
-{error_desc}
-
-Твой ответ должен быть ТОЛЬКО ОДНИМ ИЗ КОДОВ, ПЕРЕЧИСЛЕННЫХ ВЫШЕ, без каких-либо изменений, объяснений или добавлений."""
-
-        prompt2 = prompt2_template.format(codes_list=codes_list_str, error_desc=error_description)
-        logging.info(f"Этап 2: Запрос сопоставления описания '{error_description[:100]}...' с кодом из списка у Gemini (усиленный промпт, без UNKNOWN)...")
-        try:
-            response2 = self.gemini_model.generate_content(
-                prompt2,
-                generation_config=genai.types.GenerationConfig(temperature=0.0),
-                request_options={'timeout': 30}
-            )
-            ai_response_text = response2.text.strip()
-            logging.info(f"Этап 2: Ответ от Gemini (сопоставленный код): '{ai_response_text}'")
-
-            if ai_response_text.lower() in KNOWN_ERROR_CODES_LOWER:
-                original_code = next((code for code in KNOWN_ERROR_CODES if code.lower() == ai_response_text.lower()), None)
-                logging.info(f"Этап 2: Gemini успешно сопоставил код из списка: '{original_code}'")
-                return original_code, False # Прямое совпадение, флаг False
-            else:
-                # Если Gemini все же вернул что-то не из списка, пытаемся найти ближайшее совпадение
-                logging.warning(f"Этап 2: Ответ Gemini ('{ai_response_text}') не в списке KNOWN_ERROR_CODES. Поиск ближайшего совпадения...")
-                # Ищем одно наиболее похожее совпадение с порогом 0.6
-                close_matches = get_close_matches(ai_response_text, KNOWN_ERROR_CODES, n=1, cutoff=0.6)
-                if close_matches:
-                    closest_match = close_matches[0]
-                    # Вычисляем и логируем точный коэффициент схожести для отладки
-                    similarity_ratio = SequenceMatcher(None, ai_response_text, closest_match).ratio()
-                    logging.warning(f"Этап 2: Найдено ближайшее совпадение в списке: '{closest_match}' для ответа Gemini '{ai_response_text}'. Коэффициент схожести: {similarity_ratio:.4f}")
-                    return closest_match, True # Найдено по схожести, флаг True
-                else:
-                    # Если даже ближайшего совпадения нет, возвращаем None
-                    logging.error(f"Этап 2: Не найдено даже близкого совпадения в KNOWN_ERROR_CODES для ответа Gemini: '{ai_response_text}'.")
-                    return None, False # Совпадений нет, флаг False
-
-        except google_exceptions.DeadlineExceeded:
-             logging.error("Этап 2 Gemini Ошибка API: Превышен таймаут.")
-             return None, False # Возвращаем кортеж
-        except Exception as e:
-            logging.error(f"Этап 2 Gemini Ошибка API: {e}", exc_info=False)
-            return None, False # Возвращаем кортеж
-        except BaseException as e:
-            logging.error(f"Этап 2 Gemini Критическая ошибка: {e}", exc_info=True)
-            raise # Перебрасываем критическую ошибку
-
-    # --- НОВАЯ ФУНКЦИЯ ПОИСКА ПО КОНКРЕТНОМУ КОДУ В EXCEL ---
-    def _find_solution_by_code(self, sheet, product_key, error_code_from_ai):
-        """
-        Ищет ТОЧНОЕ совпадение error_code_from_ai в колонке 'A' листа sheet
-        и возвращает решение для product_key.
-        """
-        if not sheet or not product_key or not error_code_from_ai or product_key == "неизвестно":
+        if not sheet:
+            logging.warning(f"_find_solution_by_code: Sheet is None, cannot search.")
             return None
+        if not product_key or product_key.lower() == "неизвестно":
+            logging.warning(f"_find_solution_by_code: Invalid product_key ('{product_key}'), cannot search.")
+            return None
+        if not error_code_to_find:
+             logging.warning(f"_find_solution_by_code: error_code_to_find is empty or None, cannot search.")
+             return None
 
         model_column_index = None
         try:
-            header_row = sheet[2] # Заголовки моделей во второй строке
+            # Assuming model headers are in the second row
+            header_row = sheet[2]
         except IndexError:
-             logging.error(f"Не удалось прочитать строку заголовков (2) в листе '{sheet.title}'")
-             return None
-
-        # Находим индекс колонки для нашей модели
-        for cell in header_row:
-            if cell.value:
-                platform_id = str(cell.value).lower().strip().replace(" ", "")
-                if platform_id == product_key:
-                    model_column_index = cell.column
-                    logging.info(f"Найдена колонка {get_column_letter(model_column_index)} для модели '{product_key}' в листе '{sheet.title}'.")
-                    break
-        
-        if model_column_index is None:
-            logging.warning(f"Колонка для модели '{product_key}' не найдена в листе '{sheet.title}'.")
+            logging.error(f"Could not read header row (2) in sheet '{sheet.title}'")
             return None
 
-        # Ищем код ошибки в колонке 'A' (начиная с 3й строки)
-        logging.info(f"Поиск кода '{error_code_from_ai}' в колонке 'A' листа '{sheet.title}'...")
+        # Find the column index for our model identifier
+        product_key_cleaned = clean_spaced_string(str(product_key).lower())
+        for cell in header_row:
+            if cell.value:
+                platform_id_in_sheet = clean_spaced_string(str(cell.value).lower())
+                if platform_id_in_sheet == product_key_cleaned:
+                    model_column_index = cell.column
+                    logging.info(f"Found column {get_column_letter(model_column_index)} for model '{product_key}' in sheet '{sheet.title}'.")
+                    break
+
+        if model_column_index is None:
+            logging.warning(f"Column for model '{product_key}' (cleaned key: '{product_key_cleaned}') not found in sheet '{sheet.title}'.")
+            return None
+
+        # Search for the error code in column 'A' (starting from row 3)
+        logging.info(f"Searching for code '{error_code_to_find}' in column 'A' of sheet '{sheet.title}'...")
+        found_solution_text = None
+        error_code_lower = error_code_to_find.lower()
+
         for row_index in range(3, sheet.max_row + 1):
             error_code_cell = sheet.cell(row=row_index, column=1).value
             if not error_code_cell:
                 continue
-                
-            error_code_in_sheet = str(error_code_cell).strip()
-            # Сравниваем без учета регистра
-            if error_code_in_sheet.lower() == error_code_from_ai.lower():
+
+            error_code_in_sheet = str(error_code_cell).strip().lower()
+            # Case-insensitive comparison
+            if error_code_in_sheet == error_code_lower:
                 solution_cell = sheet.cell(row=row_index, column=model_column_index).value
                 solution_text = str(solution_cell or "").strip()
                 if solution_text:
-                    logging.info(f"Найдено точное совпадение кода '{error_code_from_ai}' в строке {row_index}. Найдено решение.")
-                    return {
-                        "solutions": [solution_text],
-                        "is_full": True,
-                        "matched_code": error_code_from_ai # Возвращаем код, который искали
-                    }
+                    logging.info(f"Found exact match for code '{error_code_to_find}' in row {row_index}. Solution found.")
+                    found_solution_text = solution_text
+                    break # Found the first non-empty solution, exit loop
                 else:
-                    logging.warning(f"Найдено совпадение кода '{error_code_from_ai}' в строке {row_index}, но ячейка с решением для модели '{product_key}' пуста.")
-                    # Продолжаем искать, вдруг код дублируется с решением ниже? (маловероятно, но все же)
-                    continue # Обычно здесь должен быть break, но для безопасности оставим continue
+                    # Found the code, but the cell for this model is empty. Continue searching just in case?
+                    # For exact match, we should probably stop, but logging helps.
+                    logging.warning(f"Found code '{error_code_to_find}' in row {row_index}, but solution cell for model '{product_key}' is empty. Stopping search for this code.")
+                    # If multiple rows could have the same code, we might want to continue search.
+                    # For now, assume first match (even if empty) is definitive for this code.
+                    break # Stop searching once the code is found, even if solution is empty
 
-        logging.info(f"Код '{error_code_from_ai}' не найден в колонке 'A' листа '{sheet.title}'.")
-        return None
-
-    # --- УПРОЩЕННАЯ ОСНОВНАЯ ЛОГИКА АНАЛИЗА (Только Gemini) ---
-    def find_error_solutions(self):
-        # Проверяем наличие хотя бы одного файла Excel
-        if not self.panic_sheet and not self.nand_sheet:
-            logging.error("Оба файла Excel (panic_codes, nand_list) не загружены! Поиск невозможен.")
-            # Добавляем флаг used_similarity=False
-            return [{"solutions": ["Невозможно найти решение - файлы базы знаний отсутствуют."], "is_full": False, "used_similarity": False}]
-
-        # Извлекаем информацию о продукте и паник-строку
-        try:
-            product, _, panic_string = self.extract_product_info()
-            product_cleaned = product.lower().strip().replace(" ", "")
-            original_product_name = product if product != "Неизвестно" else None
-        except Exception as e:
-             logging.error(f"Критическая ошибка при извлечении информации из лога: {e}", exc_info=True)
-             # Добавляем флаг used_similarity=False
-             return [{"solutions": ["Невозможно найти решение - критическая ошибка обработки лога."], "is_full": False, "used_similarity": False}]
-
-        # Проверяем наличие модели
-        if not product_cleaned or product_cleaned == "неизвестно":
-             logging.warning(f"Не удалось извлечь 'product'. Анализ невозможен.")
-             # Добавляем флаг used_similarity=False
-             return [{"solutions": ["solution_not_found_detailed"], "model": ["Неизвестно"], "is_full": False, "used_similarity": False}]
-
-        # Проверяем наличие panic_string
-        if not panic_string:
-            logging.warning("Отсутствует или пустой panicString для анализа.")
-             # Добавляем флаг used_similarity=False
-            return [{"solutions": ["Невозможно найти решение - не удалось извлечь текст ошибки (panic string)."], "is_full": False, "used_similarity": False}]
-
-        # --- Шаг 1: Получаем код ошибки от Gemini --- 
-        logging.info("Шаг 1: Запрос кода ошибки у Gemini...")
-        ai_error_code, used_similarity = self._get_ai_error_code(panic_string) # Получаем и код, и флаг
-
-        if not ai_error_code:
-            logging.warning("Gemini не смог определить код ошибки из списка.")
-            # Возвращаем ошибку, флаг used_similarity=False (т.к. код не найден)
-            return [{"solutions": ["solution_not_found_ai_failed"], "model": [original_product_name or "Неизвестно"], "is_full": False, "used_similarity": False}]
-
-        # Логгируем выбранный код
-        logging.info(f"Шаг 1 Завершен: Gemini предложил код '{ai_error_code}' (использована схожесть: {used_similarity}).")
-
-        # --- Шаг 2: Ищем решение в Excel по коду от Gemini ---
-        logging.info(f"Шаг 2: Поиск решения для кода '{ai_error_code}' (Gemini) и модели '{product_cleaned}' в Excel...")
-        final_solution = None
-
-        if self.panic_sheet:
-            logging.info(f"Поиск в panic_codes.xlsx (код: '{ai_error_code}')...")
-            final_solution = self._find_solution_by_code(self.panic_sheet, product_cleaned, ai_error_code)
-
-        if not final_solution and self.nand_sheet:
-            logging.info(f"Не найдено в panic_codes. Поиск в nand_list.xlsx (код: '{ai_error_code}')...")
-            final_solution = self._find_solution_by_code(self.nand_sheet, product_cleaned, ai_error_code)
-
-        # --- Шаг 3: Возвращаем результат --- 
-        if final_solution:
-            logging.info(f"Шаг 2 Завершен: Решение найдено в Excel для кода '{ai_error_code}' (предложен Gemini).")
-            # Добавляем флаг used_similarity в найденное решение
-            final_solution["used_similarity"] = used_similarity
-            return [final_solution]
+        if found_solution_text:
+            logging.info(f"Returning solution for code '{error_code_to_find}' and model '{product_key}'.")
         else:
-            logging.warning(f"Шаг 2 Завершен: Решение для кода '{ai_error_code}', предложенного Gemini, НЕ найдено в Excel для модели '{product_cleaned}'.")
-            # Возвращаем ошибку с указанием кода, который не найден в базе
-            # Флаг used_similarity берем из результата _get_ai_error_code
-            return [{"solutions": ["solution_not_found_in_excel_for_ai_code"], "model": [original_product_name or "Неизвестно"], "matched_code": [ai_error_code], "ai_source": ["Gemini"], "is_full": False, "used_similarity": used_similarity}]
+            # This log includes cases where code was found but solution was empty, or code not found at all
+            logging.info(f"Solution not found for code '{error_code_to_find}' and model '{product_key}' in sheet '{sheet.title}'.")
+
+        return found_solution_text # Returns the solution text or None

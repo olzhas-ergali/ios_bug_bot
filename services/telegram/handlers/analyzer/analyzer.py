@@ -14,11 +14,11 @@ from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.i18n import I18n
 from database.database import ORM
-from services.analyzer.analyzer import LogAnalyzer, fix_json_structure, parse_json_safely
+from services.analyzer.analyzer import LogAnalyzer, parse_json_safely, KNOWN_MODEL_IDENTIFIERS, KNOWN_ERROR_CODES
 from services.telegram.filters.role import RoleFilter
 from services.telegram.misc.callbacks import ChooseModelCallback, FullButtonCallback
 from services.telegram.misc.keyboards import Keyboards
-from services.telegram.ai.ai import analyze_file_with_ai
+from services.telegram.ai.ai import analyze_log_via_ai
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -38,7 +38,7 @@ PRICE_PER_ANALYSIS = Decimal(os.getenv("PRICE_PER_ANALYSIS", "1.00"))
 os.makedirs("data/tmp", exist_ok=True)
 
 # Сообщение по умолчанию, если решение не найдено
-SOLUTION_NOT_FOUND_DETAILED_KEY = "solution_not_found_detailed"
+SOLUTION_NOT_FOUND_DETAILED_KEY = "error write @mikoto699"
 
 def split_message(text, max_length=4000):
     if not text:
@@ -104,207 +104,200 @@ async def process_analysis_payment(
 async def document_analyze(message: Message, user, orm: ORM, i18n: I18n, state: FSMContext):
     await message.chat.do("typing")
     path = None
+    final_response_text = "" # Initialize response text
+    ai_analysis_result = None # Initialize AI result
+    solution_from_excel = None # Initialize Excel solution
+    log_analyzer_instance = None # Initialize LogAnalyzer instance
+
     try:
-        # --- Сохранение файла и базовая валидация ---
+        # --- Сохранение файла ---
         await state.update_data(message_id=message.message_id)
         path = await save_file(message, "document")
         if not path:
-            await message.answer("Ошибка сохранения файла. Попробуйте снова.") # TODO: Локализовать
+            await message.answer(i18n.gettext("Ошибка сохранения файла. Попробуйте снова.", locale=user.lang))
             return
+
+        # --- Чтение содержимого файла ---
         try:
-            log = LogAnalyzer(user.lang, path, message.from_user.username)
+            log_content = LogAnalyzer._read_log_file(path)
+            if not log_content:
+                 await message.answer(i18n.gettext("Файл пустой или не удалось прочитать.", locale=user.lang))
+                 return
         except Exception as e:
-            logging.error(f"Ошибка инициализации LogAnalyzer: {e}", exc_info=True)
-            await message.answer("Ошибка анализа файла. Проверьте формат файла и попробуйте снова.") # TODO: Локализовать
+            logging.error(f"Ошибка чтения файла {path}: {e}", exc_info=True)
+            await message.answer(i18n.gettext("Ошибка чтения файла.", locale=user.lang))
             return
-        if not log.log:
-            await message.answer("Файл пустой или имеет неподдерживаемый формат.") # TODO: Локализовать
-            return
-        if not isinstance(log.log_dict, dict):
-            log.log_dict = fix_json_structure(log.log)
-            if not isinstance(log.log_dict, dict):
-                await message.answer("Файл содержит некорректные данные. Не удалось распознать структуру.") # TODO: Локализовать
-                return
-                
-        # --- Извлечение информации --- 
-        # Извлекаем модель ЗДЕСЬ, чтобы она была доступна позже для форматирования
-        product, crash_key, panic_string = log.extract_product_info()
-        # Сохраняем исходное имя модели (или "Неизвестно")
-        model_name_for_response = product if product != "неизвестно" else "Неизвестно"
-        
-        if not crash_key: 
-             key_source = panic_string if panic_string else os.path.basename(path or "unknown_file")
-             crash_key = hashlib.md5(key_source.encode()).hexdigest()
-             logging.info(f"crashReporterKey не найден, сгенерирован хэш из panic/имени файла: {crash_key}")
+
+        # --- Генерация Crash Key (если возможно из имени файла или контента) ---
+        # Генерируем ключ до проверки баланса
+        try:
+            # Попробуем извлечь из JSON, если он там есть (базовый парсинг)
+            crash_key = None
+            try:
+                log_dict_simple = json.loads(log_content)
+                crash_key = log_dict_simple.get("crashReporterKey")
+            except json.JSONDecodeError:
+                 logging.warning("Лог не является чистым JSON, crashReporterKey не извлечен стандартно.")
+                 pass # Ошибка парсинга JSON ожидаема для многих логов
+
+            if not crash_key:
+                 key_source = log_content # Используем весь контент для хэша, если ключа нет
+                 crash_key = hashlib.md5(key_source.encode()).hexdigest()
+                 logging.info(f"crashReporterKey не найден/извлечен, сгенерирован хэш из содержимого лога: {crash_key}")
+
+        except Exception as e:
+             logging.error(f"Не удалось сгенерировать crash_key: {e}", exc_info=True)
+             # В крайнем случае используем имя файла
+             crash_key = hashlib.md5(os.path.basename(path).encode()).hexdigest()
+             logging.warning(f"Использован хэш имени файла как crash_key: {crash_key}")
 
         # --- Проверка и СПИСАНИЕ БАЛАНСА ---
         base_price = Decimal(os.getenv("PRICE_PER_ANALYSIS", "1.00"))
         ok, price_in_currency, currency_symbol = await process_analysis_payment(user.user_id, crash_key, orm, message.bot, base_price)
-        
+
         if not ok:
-            # process_analysis_payment вернет False, если баланса не хватает
             await message.answer(i18n.gettext("Недостаточно средств на балансе. Необходимо {price}{symbol}.", locale=user.lang).format(price=price_in_currency, symbol=currency_symbol))
             return
 
-        # Списываем средства *после* проверки, но *до* отправки результата
-        logging.info("--- Начало блока списания (новая логика) ---")
-        logging.info(f"Попытка списания {price_in_currency}{currency_symbol} с пользователя {user.user_id} за crash_key {crash_key}")
+        # --- Списание средств (если необходимо) ---
         deduct_success = False
         try:
-            # Проверяем, не был ли этот crash_key оплачен ранее
             if not await orm.subscription_repo.check_crash_key_exists(crash_key):
-                 logging.info("Вызов await orm.user_repo.deduct_analysis_fee...")
-                 deduct_success = await orm.user_repo.deduct_analysis_fee(user.user_id, price_in_currency, crash_key, message.bot)
-                 logging.info(f"Результат deduct_analysis_fee: {deduct_success}")
-                 if not deduct_success:
-                      logging.warning(f"Списание средств НЕ УДАЛОСЬ для пользователя {user.user_id}.")
-                      await message.answer(i18n.gettext("Ошибка при списании средств. Пожалуйста, проверьте баланс или обратитесь к администратору.", locale=user.lang))
-                      # Не выходим, так как пользователь уже оплатил или это повторный анализ
-                 else:
-                      logging.info(f"Списание средств УСПЕШНО для пользователя {user.user_id}.")
-                      # Отправка уведомления о списании только если списание успешно
-                      try:
-                          balance = await orm.user_repo.get_balance(user.user_id)
-                          deduction_text = i18n.gettext(
-                             "С вашего баланса списано {price}{symbol} за анализ файла. Остаток: {balance}{symbol}",
-                             locale=user.lang
-                          ).format(price=price_in_currency, symbol=currency_symbol, balance=balance)
-                          await message.answer(deduction_text)
-                      except Exception as e:
-                          logging.error(f"Ошибка отправки уведомления о списании: {e}")
+                logging.info(f"Списание {price_in_currency}{currency_symbol} с пользователя {user.user_id} за crash_key {crash_key}")
+                deduct_success = await orm.user_repo.deduct_analysis_fee(user.user_id, price_in_currency, crash_key, message.bot)
+                if deduct_success:
+                    logging.info(f"Списание УСПЕШНО для {user.user_id}.")
+                    try:
+                        balance = await orm.user_repo.get_balance(user.user_id)
+                        deduction_text = i18n.gettext(
+                           "С вашего баланса списано {price}{symbol} за анализ файла. Остаток: {balance}{symbol}",
+                           locale=user.lang
+                        ).format(price=price_in_currency, symbol=currency_symbol, balance=balance)
+                        await message.answer(deduction_text)
+                    except Exception as e:
+                        logging.error(f"Ошибка отправки уведомления о списании: {e}")
+                else:
+                    logging.warning(f"Списание НЕ УДАЛОСЬ для {user.user_id}.")
+                    await message.answer(i18n.gettext("Ошибка при списании средств. Пожалуйста, проверьте баланс или обратитесь к администратору.", locale=user.lang))
+                    return # Прерываем, если списание не удалось
             else:
                 logging.info(f"Пользователь {user.user_id} уже оплачивал анализ для crash_key {crash_key}. Списание не требуется.")
                 deduct_success = True # Считаем успешным, так как уже оплачено
-
         except Exception as e:
             logging.error(f"Ошибка на этапе проверки/списания: {e}", exc_info=True)
             await message.answer(i18n.gettext("Внутренняя ошибка при обработке платежа.", locale=user.lang))
-            return # Выходим если ошибка на этапе платежа
+            return
 
-        # --- Поиск решения ТОЛЬКО в локальной базе ---
-        final_response_text = ""
-        solution_used_similarity = False # Инициализируем флаг
+        # --- Анализ с помощью AI ---
+        logging.info(f"Вызов analyze_log_via_ai для файла {path}...")
+        await message.chat.do("typing") # Показываем индикатор на время AI анализа
         try:
-            # Передаем product и panic_string в функцию поиска
-            solutions_from_db = log.find_error_solutions()
-            
-            # Извлекаем флаг used_similarity из первого (и единственного) результата
-            if solutions_from_db:
-                solution_used_similarity = solutions_from_db[0].get("used_similarity", False)
-                logging.info(f"Флаг used_similarity из find_error_solutions: {solution_used_similarity}")
-            
-            first_solution_info = solutions_from_db[0] if solutions_from_db else {}
-            solution_key = first_solution_info.get("solutions", [None])[0]
-
-            if solution_key == SOLUTION_NOT_FOUND_DETAILED_KEY:
-                # Используем модель, извлеченную ранее
-                logging.info(f"Решение для crash_key {crash_key} (модель: {model_name_for_response}) в локальной БД не найдено.")
-                final_response_text = i18n.gettext(
-                    "Модель: {model}\nРешение:\nРешение не найдено в нашей базе. Скоро добавим!", 
-                    locale=user.lang
-                ).format(model=model_name_for_response)
-            
-            elif solutions_from_db: 
-                solution_text = "\n".join(first_solution_info.get("solutions", []))
-                if solution_text: 
-                    # --- ВОЗВРАЩАЕМ ФОРМАТИРОВАНИЕ --- 
-                    response_parts = []
-                    response_parts.append(f"Модель: {model_name_for_response}")
-                    response_parts.append(f"Решение:\n{solution_text}")
-                    final_response_text = "\n\n".join(response_parts) # Разделяем блоки
-                    logging.info(f"Найдено решение из БД для crash_key {crash_key}. Отправляем форматированный текст.")
-                else:
-                    # Если текст решения пустой, считаем, что не найдено (используем новый формат)
-                    model_name = first_solution_info.get("model", ["Неизвестно"])[0] # Попытаемся получить модель, если она была передана
-                    logging.warning(f"Найдено совпадение для crash_key {crash_key}, но текст решения в БД пуст.")
-                    final_response_text = i18n.gettext(
-                         "Модель: {model}\nРешение:\nРешение не найдено в нашей базе. Скоро добавим!", 
-                         locale=user.lang
-                    ).format(model=model_name)
-            else:
-                 # На случай, если find_error_solutions вернул пустой список (не должно происходить)
-                 logging.error(f"find_error_solutions вернул пустой список для {crash_key}")
-                 final_response_text = i18n.gettext(
-                         "Модель: Неизвестно\nРешение:\nРешение не найдено в нашей базе. Скоро добавим!", 
-                         locale=user.lang
-                    )
-
+            ai_analysis_result = await analyze_log_via_ai(log_content, KNOWN_ERROR_CODES)
         except Exception as e:
-            logging.error(f"Ошибка поиска/форматирования решения из БД: {e}", exc_info=True)
-            final_response_text = i18n.gettext("Ошибка при поиске решения в базе данных.", locale=user.lang)
+            logging.error(f"Ошибка при вызове analyze_log_via_ai: {e}", exc_info=True)
+            await message.answer(i18n.gettext("Ошибка при обращении к сервису анализа AI.", locale=user.lang))
+            return # Прерываем, если AI недоступен
 
-        # --- Отправка финального ответа пользователю (ТОЛЬКО из Excel) ---
-        # --- ЭКСПЕРИМЕНТ: Анализ через AI для СРАВНЕНИЯ в логах (встроен в блок отправки) ---
-        # Важно: Этот результат НЕ будет отправлен пользователю!
-        ai_comparison_result = "AI анализ не проводился или не удался."
-        if panic_string: # panic_string был извлечен в начале функции document_analyze
+        if not ai_analysis_result:
+            logging.warning(f"Анализ AI для файла {path} не вернул результат.")
+            await message.answer(i18n.gettext("Не удалось проанализировать лог с помощью AI. Возможно, лог имеет не стандартный формат.", locale=user.lang))
+            # Не прерываем полностью, можем попробовать показать только базовую инфу, если есть
+            # Но пока просто выходим
+            return
+
+        # --- Извлечение данных из результата AI ---
+        product_id = ai_analysis_result.get("product")
+        os_version = ai_analysis_result.get("os_version")
+        timestamp = ai_analysis_result.get("timestamp")
+        error_code_from_ai = ai_analysis_result.get("error_code")
+
+        model_name = KNOWN_MODEL_IDENTIFIERS.get(product_id.lower() if product_id else "", "Неизвестно") if product_id else "Неизвестно"
+        os_version_str = os_version if os_version else "Неизвестно"
+        timestamp_str = timestamp if timestamp else "Неизвестно"
+
+        # --- Формирование заголовка ответа ---
+        output_header_parts = [
+            f"*Модель:* {model_name} ({product_id})" if product_id else "*Модель:* Неизвестно",
+            f"*Версия iOS:* {os_version_str}",
+            f"*Дата сбоя:* {timestamp_str}"
+        ]
+        output_header = "\n".join(output_header_parts)
+        logging.info(f"Сформирован заголовок: {output_header}")
+
+        # --- Поиск решения в Excel по данным от AI ---
+        if error_code_from_ai and product_id and product_id.lower() != "неизвестно":
+            logging.info(f"Поиск решения в Excel для модели '{product_id}' и кода '{error_code_from_ai}'...")
+            await message.chat.do("typing") # Еще один индикатор на время поиска в Excel
             try:
-                logging.info(f"--- [Сравнение] Запуск AI анализа для crash_key {crash_key} ---")
-                ai_response_text = await analyze_file_with_ai(panic_string=panic_string, language=user.lang)
-                if ai_response_text and not ai_response_text.startswith("Ошибка:") and not ai_response_text.startswith("Error:"):
-                    ai_comparison_result = ai_response_text.strip()
-                    logging.info(f"--- [Сравнение] Успешный результат AI анализа для crash_key {crash_key} ---")
+                # Инициализируем LogAnalyzer ЗДЕСЬ, только если нужен поиск в Excel
+                log_analyzer_instance = LogAnalyzer(lang=user.lang)
+
+                # Ищем сначала в panic_codes.xlsx
+                solution_from_excel = log_analyzer_instance._find_solution_by_code(
+                    log_analyzer_instance.panic_sheet,
+                    product_id,
+                    error_code_from_ai
+                )
+                if solution_from_excel:
+                    logging.info(f"Решение найдено в panic_codes.xlsx")
                 else:
-                    ai_comparison_result = f"AI анализ вернул ошибку или пустой результат: {ai_response_text}"
-                    logging.warning(f"--- [Сравнение] Ошибка/пустой результат AI анализа для crash_key {crash_key}: {ai_response_text}")
-            except Exception as ai_err:
-                logging.error(f"--- [Сравнение] Исключение при вызове AI анализа для crash_key {crash_key}: {ai_err}", exc_info=True)
-                ai_comparison_result = f"Исключение при вызове AI анализа: {ai_err}"
+                    logging.info(f"Решение НЕ найдено в panic_codes.xlsx, ищем в nand_list.xlsx...")
+                    # Если не нашли в panic, ищем в nand_list.xlsx
+                    solution_from_excel = log_analyzer_instance._find_solution_by_code(
+                        log_analyzer_instance.nand_sheet,
+                        product_id,
+                        error_code_from_ai
+                    )
+                    if solution_from_excel:
+                         logging.info(f"Решение найдено в nand_list.xlsx")
+                    else:
+                         logging.info(f"Решение НЕ найдено и в nand_list.xlsx.")
+
+            except Exception as e:
+                logging.error(f"Ошибка при поиске решения в Excel: {e}", exc_info=True)
+                # Не прерываем, просто решение не будет найдено
+
+        # --- Формирование финального ответа ---
+        solution_part = ""
+        if error_code_from_ai:
+            solution_part += f"\n\n*Код ошибки (AI):* `{error_code_from_ai}`" # Используем ` для кода
+            if solution_from_excel:
+                solution_part += f"\n\n*Решение (Excel):*\n{solution_from_excel}"
+            elif product_id and product_id.lower() != "неизвестно":
+                # Код ошибки есть, но решения для этой модели нет
+                solution_part += f"\n\n*Решение:* {i18n.gettext(SOLUTION_NOT_FOUND_DETAILED_KEY, locale=user.lang)}" # Используем ключ локализации
+            else:
+                 # Код ошибки есть, но модель неизвестна, поиск не выполнялся
+                 solution_part += f"\n\n*Решение:* Невозможно выполнить поиск в базе (модель не определена)."
         else:
-            logging.warning(f"--- [Сравнение] AI анализ пропущен для crash_key {crash_key}, т.к. panic_string пуст или не извлечен.")
+            solution_part += f"\n\n*Код ошибки:* {i18n.gettext('Не удалось определить код ошибки по логу.', locale=user.lang)}"
 
-        # Логируем ОБА результата для сравнения
-        logging.info(f"""--- [Сравнение] Результат EXCEL для crash_key {crash_key} ---
-{final_response_text}
---- КОНЕЦ EXCEL --- """)
-        logging.info(f"""--- [Сравнение] Результат   AI  для crash_key {crash_key} ---
-{ai_comparison_result}
---- КОНЕЦ AI --- """)
-        # -------------------------------------------------------------
-
-        if not final_response_text: # На всякий случай, если текст пустой после всех проверок
-            final_response_text = i18n.gettext("Не удалось сформировать ответ.", locale=user.lang)
-
-        # Определяем текст для отправки (с суффиксом или без)
-        text_to_send = final_response_text
-        if solution_used_similarity: # Проверяем флаг
-            text_to_send += "\n\n*если вы думаете что инструкция неккоректна пишите @onyokaa*"
-            logging.info("Добавлен суффикс, так как использовался поиск по схожести.")
-        else:
-            logging.info("Суффикс не добавлен, так как НЕ использовался поиск по схожести.")
-
-        logging.info(f"--- [ПРОВЕРКА] Отправка ответа пользователю для crash_key {crash_key} ---")
-        sent_messages = []
-        # Используем text_to_send для отправки
-        for part in split_message(text_to_send):
-            # Отправляем с parse_mode="Markdown", если суффикс был добавлен (чтобы звездочки работали)
-            # Иначе отправляем обычным текстом
-            parse_mode = "Markdown" if solution_used_similarity else None 
-            sent_msg = await message.answer(part, parse_mode=parse_mode)
-            sent_messages.append(sent_msg) 
-            if orm.settings and orm.settings.channel_id:
-                 try:
-                     await sent_msg.forward(orm.settings.channel_id)
-                 except Exception as e:
-                     logging.error(f"Ошибка пересылки в канал: {e}")
-
-        # Сохраняем результат ответа из базы данных (который был отправлен) в FSM для возможной кнопки "Полный лог"
-        # Используем оригинальный текст БЕЗ суффикса
-        await state.update_data(last_db_response=final_response_text)
+        final_response_text = output_header + solution_part
+        logging.info("Финальный текст ответа сформирован.")
 
     except Exception as e:
-        # Общая обработка ошибок
-        logging.error(f"Критическая ошибка обработки файла: {e}", exc_info=True)
-        await message.answer(i18n.gettext("Произошла непредвиденная ошибка при обработке файла.", locale=user.lang))
-        # Не уведомляем о балансе здесь, т.к. ошибка могла быть до проверки баланса
+        logging.error(f"Критическая ошибка в document_analyze: {e}", exc_info=True)
+        final_response_text = i18n.gettext("Произошла непредвиденная ошибка при анализе файла.", locale=user.lang)
+        # Попытаемся отправить хоть какое-то сообщение об ошибке
+        try:
+            await message.answer(final_response_text)
+        except Exception as send_error:
+             logging.error(f"Не удалось даже отправить сообщение об ошибке: {send_error}")
 
     finally:
-        # Очистка временного файла
+        # Отправляем результат (даже если это сообщение об ошибке, сформированное в except)
+        if final_response_text:
+            parts = split_message(final_response_text)
+            for part in parts:
+                await message.answer(part, parse_mode="Markdown") # Используем Markdown
+
+        # Удаляем временный файл
         if path and os.path.exists(path):
             try:
                 os.remove(path)
+                logging.info(f"Временный файл {path} удален.")
             except Exception as e:
-                 logging.error(f"Ошибка удаления временного файла {path}: {e}")
+                logging.error(f"Ошибка удаления временного файла {path}: {e}")
 
 async def notify_no_funds(message: Message, orm: ORM):
     admins = await orm.user_repo.get_admins()
