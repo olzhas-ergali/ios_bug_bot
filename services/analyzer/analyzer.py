@@ -336,7 +336,7 @@ class LogAnalyzer:
         try:
             nand_workbook = openpyxl.load_workbook("./data/nand_list.xlsx")
             # Use the active sheet as there's only one relevant sheet expected
-                 self.nand_sheet = nand_workbook.active
+            self.nand_sheet = nand_workbook.active
             logging.info(f"Loaded active sheet '{self.nand_sheet.title}' from nand_list.xlsx")
         except FileNotFoundError:
             logging.warning("File ./data/nand_list.xlsx not found! NAND info search will not be possible.")
@@ -392,7 +392,7 @@ class LogAnalyzer:
             logging.warning(f"_find_solution_by_code: Invalid product_key ('{product_key}'), cannot search.")
             return None
         if not error_code_to_find:
-             logging.warning(f"_find_solution_by_code: error_code_to_find is empty or None, cannot search.")
+            logging.warning(f"_find_solution_by_code: error_code_to_find is empty or None, cannot search.")
             return None
 
         model_column_index = None

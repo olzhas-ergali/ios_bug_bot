@@ -87,7 +87,7 @@ class SubscriptionRepo(Repo):
                 )
                 updated_id = result.scalar_one_or_none()
                 if updated_id:
-                await session.commit()
+                    await session.commit()
                     return True
                 else:
                     # Не удалось обновить (подписка не найдена, истекла или лимит исчерпан)
